@@ -25,6 +25,7 @@ import {
   CLOUD_RESOURCE_HEADER,
   addLeaderAwareRoutingHeader,
 } from '../src/common';
+import {traceWrap} from './instrument';
 
 export interface TransactionIdentifier {
   session: string | Session;
@@ -360,6 +361,12 @@ class BatchTransaction extends Snapshot {
     };
   }
 }
+
+traceWrap(BatchTransaction, [
+  'createQueryPartitions',
+  'createPartitions_',
+  'createReadPartitions',
+]);
 
 /*! Developer Documentation
  *

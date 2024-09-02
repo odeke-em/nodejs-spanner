@@ -102,7 +102,7 @@ import Policy = google.iam.v1.Policy;
 import FieldMask = google.protobuf.FieldMask;
 import IDatabase = google.spanner.admin.database.v1.IDatabase;
 import snakeCase = require('lodash.snakecase');
-import {getActiveOrNoopSpan} from './instrument';
+import {getActiveOrNoopSpan, traceWrap} from './instrument';
 
 export type GetDatabaseRolesCallback = RequestCallback<
   IDatabaseRole,
@@ -3857,6 +3857,29 @@ callbackifyAll(Database, {
     'updateSchema',
   ],
 });
+
+traceWrap(Database, [
+  'batchCreateSessions',
+  'batchWriteAtLeastOnce',
+  'createBatchTransaction',
+  'createSession',
+  'createTable',
+  'delete',
+  'get',
+  'getDatabaseRoles',
+  'getIamPolicy',
+  'getMetadata',
+  'getSchema',
+  'getSessions',
+  'getSnapshot',
+  'restore',
+  'run',
+  '_runPartitionedUpdate',
+  'runPartitionedUpdate',
+  'runStream',
+  'runTransaction',
+  'runTransactionAsync',
+]);
 
 /**
  * Reference to the {@link Database} class.

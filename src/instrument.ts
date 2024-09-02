@@ -36,6 +36,10 @@ import {
   SpanKind,
 } from '@opentelemetry/api';
 
+import {EventEmitter} from 'events';
+import {finished} from 'stream';
+import {PartialResultStream} from './partial-result-stream';
+
 const optedInPII: boolean =
   process.env.SPANNER_ENABLE_EXTENDED_TRACING === 'true';
 
@@ -239,4 +243,134 @@ class noopSpan implements Span {
   updateName(name: string): this {
     return this;
   }
+}
+
+interface TraceWrapped extends Function {
+  traceWrapped?: boolean;
+}
+
+function traceWrapIt(spanName: string, original: TraceWrapped) {
+  // original would be for example:
+  // const [rows] = await database.run('SELECT 1');
+  // or
+  // database.run('SELECT 1', (err, rows) => {
+  //    ...
+  // });
+  if (original.traceWrapped) {
+    return original;
+  }
+
+  const traced: TraceWrapped = function (
+    this: any
+  ): void | Promise<unknown> | PartialResultStream | EventEmitter {
+    const lastArg = arguments[arguments.length - 1];
+    const hasCallback = typeof lastArg === 'function';
+
+    return startTrace(spanName, {}, span => {
+      console.log(`\x1b[31m${spanName}\x1b[00m`);
+      if (hasCallback) {
+        // This is a callback
+        // Wrap our method with a callback.
+        const callback = lastArg;
+        arguments[arguments.length - 1] = function (...args: any) {
+          const errIndex = Array.from(arguments).findIndex(
+            arg => arg instanceof Error
+          );
+          const err: Error = errIndex !== -1 ? arguments[errIndex] : null;
+          setSpanError(span, err);
+          span.end();
+          callback(...args);
+        };
+
+        original.apply(this, arguments);
+        return;
+      }
+
+      const originalResult = original.apply(this, arguments);
+      // console.log('className', Object.entries(originalResult));
+
+      if (originalResult instanceof PartialResultStream) {
+        // We've got a Stream.
+        const originalStream = originalResult as PartialResultStream;
+        if (originalStream.on) {
+          originalStream.on('error', err => {
+            setSpanError(span, err);
+          });
+        }
+
+        finished(originalStream, err => {
+          if (err) {
+            setSpanError(span, err);
+          }
+          span.end();
+        });
+
+        const eventNames = originalStream.eventNames();
+        console.log(spanName, 'eventNames', eventNames);
+
+        const closeRelatedEvents = [
+          'close',
+          'complete',
+          'end',
+          'finished',
+          'prefinish',
+        ];
+        closeRelatedEvents.forEach(eventName => {
+          originalStream.on(eventName, () => span.end());
+        });
+        return originalStream;
+      } else if (originalResult instanceof EventEmitter) {
+        console.log(spanName, 'as eventEmitter');
+        const originalStream = originalResult as EventEmitter;
+        originalStream.on('error', err => {
+          setSpanError(span, err);
+        });
+        const closeRelatedEvents = [
+          'close',
+          'complete',
+          'end',
+          'finished',
+          'prefinish',
+        ];
+        closeRelatedEvents.forEach(eventName => {
+          originalStream.on(eventName, () => span.end());
+        });
+        return originalStream;
+      } else {
+        console.log('as promise', spanName);
+        // This is a promise
+        const originalPromise = originalResult;
+        // Extract the original promise then create a fresh one.
+        const passThroughPromise = new Promise((resolve, reject) => {
+          originalPromise
+            .then(result => {
+              resolve(result);
+            })
+            .catch((err: Error) => {
+              setSpanErrorAndException(span, err);
+              reject(err);
+            })
+            .finally(() => {
+              span.end();
+            });
+        });
+
+        return passThroughPromise;
+      }
+    });
+  };
+
+  traced.traceWrapped = true;
+  return traced;
+}
+
+export function traceWrap(klass: Function, methodNames: string[]) {
+  methodNames.forEach(methodName => {
+    const original = klass.prototype[methodName];
+    const spanName = klass.name + '.' + methodName;
+    if (!original) {
+      throw new Error(`Missing/mispelled method ${spanName}`);
+    }
+    klass.prototype[methodName] = traceWrapIt(spanName, original);
+  });
 }

@@ -80,6 +80,7 @@ import {
 import grpcGcpModule = require('grpc-gcp');
 const grpcGcp = grpcGcpModule(grpc);
 import * as v1 from './v1';
+import {traceWrap} from './instrument';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const gcpApiConfig = require('./spanner_grpc_config.json');
@@ -1863,6 +1864,36 @@ class Spanner extends GrpcService {
     return codec.Struct.fromJSON(value);
   }
 }
+
+traceWrap(v1.DatabaseAdminClient, [
+  'createDatabase',
+  'getDatabase',
+  'dropDatabase',
+  'updateDatabase',
+  'restoreDatabase',
+  'listDatabases',
+  'listDatabasesStream',
+  'listDatabasesAsync',
+  'setIamPolicy',
+  'deleteBackup',
+  'getBackup',
+  'updateBackup',
+  'copyBackup',
+  'createBackupSchedule',
+  'getBackupSchedule',
+  'updateBackupSchedule',
+  'deleteBackupSchedule',
+]);
+
+traceWrap(Spanner, [
+  'close',
+  'createInstance',
+  'getInstances',
+  'createInstanceConfig',
+  'getInstanceConfigs',
+  'getInstanceConfig',
+  'getInstanceConfigOperations',
+]);
 
 /*! Developer Documentation
  *

@@ -44,6 +44,7 @@ import {
 import {grpc, CallOptions} from 'google-gax';
 import IRequestOptions = google.spanner.v1.IRequestOptions;
 import {Spanner} from '.';
+import {traceWrap} from './instrument';
 
 export type GetSessionResponse = [Session, r.Response];
 
@@ -534,6 +535,8 @@ export class Session extends common.GrpcServiceObject {
     return this.parent.parent.parent as Spanner;
   }
 }
+
+traceWrap(Session, ['create', 'getMetadata', 'keepAlive']);
 
 /*! Developer Documentation
  *

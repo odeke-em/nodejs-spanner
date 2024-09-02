@@ -51,6 +51,7 @@ import {google as instanceAdmin} from '../protos/protos';
 import {google as databaseAdmin} from '../protos/protos';
 import {google as spannerClient} from '../protos/protos';
 import {CreateInstanceRequest} from './index';
+import {traceWrap} from './instrument';
 
 export type IBackup = databaseAdmin.spanner.admin.database.v1.IBackup;
 export type IDatabase = databaseAdmin.spanner.admin.database.v1.IDatabase;
@@ -1660,6 +1661,16 @@ class Instance extends common.GrpcServiceObject {
     return 'projects/' + projectId + '/instances/' + instanceName;
   }
 }
+
+traceWrap(Instance, [
+  'createDatabase',
+  'delete',
+  'exists',
+  'get',
+  'getDatabases',
+  'getMetadata',
+  'setMetadata',
+]);
 
 /*! Developer Documentation
  *

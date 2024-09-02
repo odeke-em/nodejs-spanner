@@ -45,6 +45,7 @@ import IQueryOptions = google.spanner.v1.ExecuteSqlRequest.IQueryOptions;
 import IRequestOptions = google.spanner.v1.IRequestOptions;
 import {Database, Spanner} from '.';
 import ReadLockMode = google.spanner.v1.TransactionOptions.ReadWrite.ReadLockMode;
+import {traceWrap} from './instrument';
 
 export type Rows = Array<Row | Json>;
 const RETRY_INFO_TYPE = 'type.googleapis.com/google.rpc.retryinfo';
@@ -1480,6 +1481,7 @@ export class Snapshot extends EventEmitter {
   }
 }
 
+traceWrap(Snapshot, ['begin', 'createReadStream', 'read', 'run', 'runStream']);
 /*! Developer Documentation
  *
  * All async methods (except for streams) return a Promise in the event
@@ -1552,6 +1554,8 @@ export class Dml extends Snapshot {
     );
   }
 }
+
+traceWrap(Dml, ['runUpdate']);
 
 /*! Developer Documentation
  *
@@ -2489,6 +2493,8 @@ export class Transaction extends Dml {
   }
 }
 
+traceWrap(Transaction, ['batchUpdate', 'commit', 'rollback']);
+
 /*! Developer Documentation
  *
  * All async methods (except for streams) return a Promise in the event
@@ -2800,6 +2806,8 @@ export class PartitionedDml extends Dml {
     });
   }
 }
+
+traceWrap(PartitionedDml, ['runUpdate']);
 
 /*! Developer Documentation
  *
