@@ -977,19 +977,12 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
       if (amount + this.size > this.options.max!) {
         amount = this.options.max! - this.size;
       }
-      span.addEvent('creating new session', {
-        'total.pending': this.totalPending,
-        'total.waiters': this.totalWaiters,
-        amount: amount,
-        min: min,
-      });
 
       if (amount > 0) {
         this._pending += amount;
         promises.push(
           new Promise((_, reject) => {
             this._pending -= amount;
-            span.addEvent('creating a new session');
             this._createSessions(amount).catch(reject);
           })
         );
@@ -1089,7 +1082,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    */
   _prepareTransaction(session: Session): void {
     const span = getActiveOrNoopSpan();
-    span.addEvent('creating transaction for session');
     const transaction = session.transaction(
       (session.parent as Database).queryOptions_
     );
