@@ -1437,9 +1437,22 @@ describe('SessionPool', () => {
           return evtA.time < evtB.time;
         });
 
-        // At minimum we need the basic annotation, 'acquired a valid session'.
-        const event0 = events[0];
-        assert.strictEqual(event0.name, 'acquired a valid session');
+        const gotEventNames: string[] = [];
+        events.forEach(event => {
+          gotEventNames.push(event.name);
+        });
+
+        const wantEventNames = [
+          'Acquiring session',
+          'Acquired session',
+          'Creating Transaction',
+          'Transaction Creation Done',
+        ];
+        assert.deepEqual(
+          gotEventNames,
+          wantEventNames,
+          `Mismatched events\n\tGot:  ${gotEventNames}\n\tWant: ${wantEventNames}`
+        );
       });
     });
   });

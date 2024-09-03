@@ -637,7 +637,7 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
   async _acquire(): Promise<Session> {
     const span = getActiveOrNoopSpan();
     if (!this.isOpen) {
-      span.addEvent('session pool is not open');
+      span.addEvent('SessionPool is closed');
       const err = new GoogleError(errors.Closed);
       setSpanErrorAndException(span, err);
       throw err;
@@ -651,23 +651,31 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     // wrapping this logic in a function to call recursively if the session
     // we end up with is already dead
     const getSession = async (): Promise<Session> => {
+      span.addEvent('Acquiring session');
       const elapsed = Date.now() - startTime;
 
       if (elapsed >= timeout!) {
         setSpanErrorAndException(span, 'timed out');
+        span.addEvent('Could not acquire session due to an exceeded timeout');
         throw new GoogleError(errors.Timeout);
       }
 
       const session = await this._getSession(startTime);
 
       if (this._isValidSession(session)) {
-        span.addEvent('acquired a valid session', {
+        span.addEvent('Acquired session', {
           'time.elapsed': Date.now() - startTime,
           'session.id': session.id.toString(),
         });
         return session;
       }
 
+      span.addEvent(
+        'Could not acquire session because it was invalid. Retrying',
+        {
+          'session.id': session.id.toString(),
+        }
+      );
       this._inventory.borrowed.delete(session);
       return getSession();
     };
@@ -700,9 +708,7 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    * @return {Session}
    */
   _borrowFrom(): Session {
-    const span = getActiveOrNoopSpan();
     const session = this._inventory.sessions.pop()!;
-    span.addEvent('popped session from inventory');
     this._inventory.borrowed.add(session);
     return session;
   }
@@ -755,7 +761,7 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     while (amount > 0) {
       let sessions: Session[] | null = null;
 
-      span.addEvent(`trying to create ${amount} sessions`);
+      span.addEvent('Creating sessions', {count: amount});
 
       try {
         [sessions] = await this.database.batchCreateSessions({
@@ -768,11 +774,11 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
       } catch (e) {
         this._pending -= amount;
         this.emit('createError', e);
+        span.addEvent('Failed to create sessions');
         setSpanErrorAndException(span, e as Error);
         throw e;
       }
 
-      span.addEvent(`started adding ${amount} sessions to the inventory`);
       sessions.forEach((session: Session) => {
         setImmediate(() => {
           this._inventory.borrowed.add(session);
@@ -780,7 +786,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
           this.release(session);
         });
       });
-      span.addEvent(`finished adding ${amount} sessions to the inventory`);
     }
   }
 
@@ -893,16 +898,14 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    */
   async _getSession(startTime: number): Promise<Session> {
     const span = getActiveOrNoopSpan();
-    span.addEvent('Attempting to get session');
 
     if (this._hasSessionUsableFor()) {
       span.addEvent('Cache hit: has usable session');
-      const sessPromise = this._borrowNextAvailableSession();
-      return sessPromise;
+      return this._borrowNextAvailableSession();
     }
 
     if (this.isFull && this.options.fail!) {
-      span.addEvent('session pool is full and failFast=true');
+      span.addEvent('Session pool is full and failFast=true');
       const err = new SessionPoolExhaustedError(this._getLeaks());
       setSpanErrorAndException(span, err);
       throw err;
@@ -912,7 +915,7 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     let removeListener: Function;
 
     // Wait for a session to become available.
-    span.addEvent('waiting for a session to become available');
+    span.addEvent('Waiting for a session to become available');
     const availableEvent = 'session-available';
     const promises = [
       new Promise((_, reject) => {
@@ -939,9 +942,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     ];
 
     const timeout = this.options.acquireTimeout;
-    if (timeout !== undefined) {
-      span.setAttribute('sessionpool.timeout', timeout);
-    }
 
     let removeTimeoutListener = () => {};
     if (!is.infinite(timeout!)) {
@@ -963,7 +963,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     // Only create a new session if there are more waiters than sessions already
     // being created. The current requester will be waiter number _numWaiters+1.
     if (!this.isFull && this.totalPending <= this.totalWaiters) {
-      span.addEvent('pool is not full and more waiters than sessions');
       let amount = this.options.incStep
         ? this.options.incStep
         : DEFAULTS.incStep!;
@@ -1082,13 +1081,17 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    */
   _prepareTransaction(session: Session): void {
     const span = getActiveOrNoopSpan();
+    span.addEvent('Creating Transaction', {
+      'session.id': session.id.toString(),
+    });
+
     const transaction = session.transaction(
       (session.parent as Database).queryOptions_
     );
     session.txn = transaction;
-    span.addEvent('created transaction for session', {
+    span.addEvent('Transaction Creation Done', {
       'session.id': session.id.toString(),
-      'transaction.id': transaction.id?.toString(),
+      'transaction.id': transaction?.id?.toString(),
     });
   }
 
@@ -1104,9 +1107,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    * @param {Session} session The session object.
    */
   _release(session: Session): void {
-    const span = getActiveOrNoopSpan();
-    span.addEvent('releasing session back to the pool', {id: session.id});
-
     this._inventory.sessions.push(session);
     this._inventory.borrowed.delete(session);
     this._traces.delete(session.id);
@@ -1115,7 +1115,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     this.emit('session-available');
     this.emit('readonly-available');
     this.emit('readwrite-available');
-    span.addEvent('released session back to the pool', {id: session.id});
   }
 
   /**
