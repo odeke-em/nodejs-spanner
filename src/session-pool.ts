@@ -748,7 +748,7 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    */
   async _createSessions(amount: number): Promise<void> {
     const span = getActiveOrNoopSpan();
-    span.setAttribute('session.requested.count', amount);
+    span.addEvent(`Requesting ${amount} sessions`);
 
     const labels = this.options.labels!;
     const databaseRole = this.options.databaseRole!;
@@ -758,12 +758,15 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     }
     this._pending += amount;
 
+    let nReturned = 0;
+    const nRequested: number = amount;
+
     // while we can request as many sessions be created as we want, the backend
     // will return at most 100 at a time, hence the need for a while loop.
     while (amount > 0) {
       let sessions: Session[] | null = null;
 
-      span.addEvent('Creating sessions', {count: amount});
+      span.addEvent(`Creating ${amount} sessions`);
 
       try {
         [sessions] = await this.database.batchCreateSessions({
@@ -773,10 +776,13 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
         });
 
         amount -= sessions.length;
+        nReturned += sessions.length;
       } catch (e) {
         this._pending -= amount;
         this.emit('createError', e);
-        span.addEvent('Failed to create sessions');
+        span.addEvent(
+          `Requested for ${nRequested} sessions returned ${nReturned}`
+        );
         setSpanErrorAndException(span, e as Error);
         throw e;
       }
@@ -789,6 +795,8 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
         });
       });
     }
+
+    span.addEvent(`Requested for ${nRequested} sessions returned ${nReturned}`);
   }
 
   /**
