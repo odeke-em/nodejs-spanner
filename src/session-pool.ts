@@ -660,6 +660,8 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
         throw new GoogleError(errors.Timeout);
       }
 
+      span.addEvent('Acquiring session');
+
       const session = await this._getSession(startTime);
 
       if (this._isValidSession(session)) {
