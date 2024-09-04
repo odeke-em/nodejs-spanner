@@ -2962,7 +2962,9 @@ class Database extends common.GrpcServiceObject {
             if (session) {
               session.lastError = err as grpc.ServiceError;
             }
-            span.addEvent('No session available', {'failed_session.id': session?.id});
+            span.addEvent('No session available', {
+              'failed_session.id': session?.id,
+            });
             // Remove the current data stream from the end user stream.
             dataStream.unpipe(proxyStream);
             dataStream.removeListener('end', endListener);
