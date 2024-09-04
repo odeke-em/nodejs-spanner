@@ -5004,7 +5004,7 @@ describe('Spanner with mock server', () => {
     provider.register();
 
     const query = {
-      sql: 'SELECT CURRENT_TIMESTAMP()',
+      sql: selectSql,
     };
 
     after(async () => {
@@ -5017,9 +5017,8 @@ describe('Spanner with mock server', () => {
         port,
         sslCreds: grpc.credentials.createInsecure(),
       });
-      // Gets a reference to a Cloud Spanner instance and database
-      instance = spanner.instance('test-instance');
-      const database = instance.database('test-db');
+      instance = spanner.instance('instance');
+      const database = instance.database('db');
 
       async function runIt() {
         const [rows] = await database.run(query);

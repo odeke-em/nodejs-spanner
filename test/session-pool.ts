@@ -1459,7 +1459,7 @@ describe('SessionPool', () => {
   });
 });
 
-describe('Made trace annotations', () => {
+describe('CreateSessions span annotations', () => {
   const sandbox = sinon.createSandbox();
 
   const DATABASE = {
@@ -1484,6 +1484,14 @@ describe('Made trace annotations', () => {
   };
   DATABASE.session = createSession;
 
+  const exporter = new InMemorySpanExporter();
+  const provider = new NodeTracerProvider({
+    sampler: new AlwaysOnSampler(),
+    exporter: exporter,
+  });
+  provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+  provider.register();
+
   const sessionPool = new SessionPool(DATABASE);
   sessionPool.isOpen = true;
   sessionPool._isValidSession = () => true;
@@ -1493,15 +1501,7 @@ describe('Made trace annotations', () => {
   const stub = sandbox.stub(DATABASE, 'batchCreateSessions').resolves(RESPONSE);
   const releaseStub = sandbox.stub(sessionPool, 'release');
 
-  const exporter = new InMemorySpanExporter();
-  const provider = new NodeTracerProvider({
-    sampler: new AlwaysOnSampler(),
-    exporter: exporter,
-  });
-  provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
-  provider.register();
-
-  it('Run it', () => {
+  it('Run and collect', () => {
     startTrace('aSpan', {opts: {tracerProvider: provider}}, span => {
       async function create() {
         await sessionPool._createSessions(n);
