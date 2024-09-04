@@ -824,10 +824,10 @@ class Database extends common.GrpcServiceObject {
       }
 
       const span = getActiveOrNoopSpan();
-      span.addEvent('Creating Transaction');
+      span.addEvent('Creating BatchTransaction');
 
       const transaction = this.batchTransaction({session: session!}, options);
-      span.addEvent('Transaction Creation Done', {
+      span.addEvent('BatchTransaction Creation Done', {
         id: transaction?.id?.toString(),
       });
       this._releaseOnEnd(session!, transaction);

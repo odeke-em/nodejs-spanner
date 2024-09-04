@@ -1444,10 +1444,7 @@ describe('SessionPool', () => {
 
         const wantEventNames = [
           'Acquiring session',
-          'Acquiring session',
           'Acquired session',
-          'Creating Transaction',
-          'Transaction Creation Done',
         ];
         assert.deepEqual(
           gotEventNames,

@@ -510,7 +510,7 @@ export class Session extends common.GrpcServiceObject {
       queryOptions,
       requestOptions
     );
-    span.addEvent('Transaction creation done', {
+    span.addEvent('Transaction Creation Done', {
       id: transaction?.id?.toString(),
     });
     return transaction;

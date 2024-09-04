@@ -660,8 +660,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
         throw new GoogleError(errors.Timeout);
       }
 
-      span.addEvent('Acquiring session');
-
       const session = await this._getSession(startTime);
 
       if (this._isValidSession(session)) {
@@ -1090,19 +1088,10 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    * @param {object} options The transaction options.
    */
   _prepareTransaction(session: Session): void {
-    const span = getActiveOrNoopSpan();
-    span.addEvent('Creating Transaction', {
-      'session.id': session.id.toString(),
-    });
-
     const transaction = session.transaction(
       (session.parent as Database).queryOptions_
     );
     session.txn = transaction;
-    span.addEvent('Transaction Creation Done', {
-      'session.id': session.id.toString(),
-      'transaction.id': transaction?.id?.toString(),
-    });
   }
 
   /**
