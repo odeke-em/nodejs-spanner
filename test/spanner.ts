@@ -5003,24 +5003,18 @@ describe('Spanner with mock server', () => {
     provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
     provider.register();
 
-    const query = {
-      sql: selectSql,
-    };
-
     after(async () => {
       await provider.shutdown();
     });
 
     startTrace('aSpan', {opts: {tracerProvider: provider}}, span => {
-      const spanner = new Spanner({
-        servicePath: 'localhost',
-        port,
-        sslCreds: grpc.credentials.createInsecure(),
-      });
-      instance = spanner.instance('instance');
-      const database = instance.database('db');
+      const database = newTestDatabase();
 
       async function runIt() {
+        const query = {
+          sql: 'SELECT 1',
+        };
+
         const [rows] = await database.run(query);
         assert.strictEqual(rows.length, 1);
       }

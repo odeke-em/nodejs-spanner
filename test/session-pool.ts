@@ -1442,10 +1442,7 @@ describe('SessionPool', () => {
           gotEventNames.push(event.name);
         });
 
-        const wantEventNames = [
-          'Acquiring session',
-          'Acquired session',
-        ];
+        const wantEventNames = ['Acquiring session', 'Acquired session'];
         assert.deepEqual(
           gotEventNames,
           wantEventNames,
