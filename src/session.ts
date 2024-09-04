@@ -44,6 +44,7 @@ import {
 import {grpc, CallOptions} from 'google-gax';
 import IRequestOptions = google.spanner.v1.IRequestOptions;
 import {Spanner} from '.';
+import {getActiveOrNoopSpan} from './instrument';
 
 export type GetSessionResponse = [Session, r.Response];
 
@@ -480,7 +481,11 @@ export class Session extends common.GrpcServiceObject {
     options?: TimestampBounds,
     queryOptions?: google.spanner.v1.ExecuteSqlRequest.IQueryOptions
   ) {
-    return new Snapshot(this, options, queryOptions);
+    const span = getActiveOrNoopSpan();
+    span.addEvent('Creating Snapshot');
+    const snapshot = new Snapshot(this, options, queryOptions);
+    span.addEvent('Snapshot creation done', {id: snapshot?.id?.toString()});
+    return snapshot;
   }
   /**
    * Create a read write Transaction.
@@ -497,7 +502,18 @@ export class Session extends common.GrpcServiceObject {
     queryOptions?: google.spanner.v1.ExecuteSqlRequest.IQueryOptions,
     requestOptions?: Pick<IRequestOptions, 'transactionTag'>
   ) {
-    return new Transaction(this, undefined, queryOptions, requestOptions);
+    const span = getActiveOrNoopSpan();
+    span.addEvent('Creating Transaction');
+    const transaction = new Transaction(
+      this,
+      undefined,
+      queryOptions,
+      requestOptions
+    );
+    span.addEvent('Transaction creation done', {
+      id: transaction?.id?.toString(),
+    });
+    return transaction;
   }
   /**
    * Format the session name to include the parent database's name.

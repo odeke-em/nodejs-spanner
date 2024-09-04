@@ -1458,6 +1458,89 @@ describe('SessionPool', () => {
   });
 });
 
+describe('Made trace annotations', () => {
+  const sandbox = sinon.createSandbox();
+
+  const DATABASE = {
+    batchCreateSessions: noop,
+    databaseRole: 'parent_role',
+  } as unknown as Database;
+
+  const SessionPool = proxyquire('../src/session-pool.js', {
+    'p-queue': FakePQueue,
+    'stack-trace': fakeStackTrace,
+  }).SessionPool;
+
+  const createSession = (name = 'id', props?): Session => {
+    props = props || {};
+
+    return Object.assign(new Session(DATABASE, name), props, {
+      create: sandbox.stub().resolves(),
+      delete: sandbox.stub().resolves(),
+      keepAlive: sandbox.stub().resolves(),
+      transaction: sandbox.stub().returns(new FakeTransaction()),
+    });
+  };
+  DATABASE.session = createSession;
+
+  const sessionPool = new SessionPool(DATABASE);
+  sessionPool.isOpen = true;
+  sessionPool._isValidSession = () => true;
+
+  const n = 5;
+  const RESPONSE = [[{}, {}, {}]];
+  const stub = sandbox.stub(DATABASE, 'batchCreateSessions').resolves(RESPONSE);
+  const releaseStub = sandbox.stub(sessionPool, 'release');
+
+  const exporter = new InMemorySpanExporter();
+  const provider = new NodeTracerProvider({
+    sampler: new AlwaysOnSampler(),
+    exporter: exporter,
+  });
+  provider.addSpanProcessor(new SimpleSpanProcessor(exporter));
+  provider.register();
+
+  it('Run it', () => {
+    startTrace('aSpan', {opts: {tracerProvider: provider}}, span => {
+      async function create() {
+        await sessionPool._createSessions(n);
+        assert.strictEqual(sessionPool.size, n);
+        await new Promise((resolve, reject) => setTimeout(resolve, 600));
+      }
+
+      create();
+
+      assert.strictEqual(!span.events, false, 'Events must be set');
+      assert.strictEqual(
+        span.events.length > 0,
+        true,
+        'Expecting at least 1 event'
+      );
+      const events = span.events;
+
+      // Sort the events by earliest time of occurence.
+      events.sort((evtA, evtB) => {
+        return evtA.time < evtB.time;
+      });
+
+      const gotEventNames: string[] = [];
+      events.forEach(event => {
+        gotEventNames.push(event.name);
+      });
+
+      const wantEventNames = [
+        `Requesting ${n} sessions`,
+        `Creating ${n} sessions`,
+      ];
+      assert.deepEqual(
+        gotEventNames,
+        wantEventNames,
+        `Mismatched events\n\tGot:  ${gotEventNames}\n\tWant: ${wantEventNames}`
+      );
+    });
+  });
+});
+
 function isAround(actual, expected) {
   return actual > expected - 50 && actual < expected + 50;
 }

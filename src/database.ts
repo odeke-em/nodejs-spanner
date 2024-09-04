@@ -102,6 +102,7 @@ import Policy = google.iam.v1.Policy;
 import FieldMask = google.protobuf.FieldMask;
 import IDatabase = google.spanner.admin.database.v1.IDatabase;
 import snakeCase = require('lodash.snakecase');
+import {getActiveOrNoopSpan} from './instrument';
 
 export type GetDatabaseRolesCallback = RequestCallback<
   IDatabaseRole,
@@ -821,7 +822,14 @@ class Database extends common.GrpcServiceObject {
         callback!(err as ServiceError, null, undefined);
         return;
       }
+
+      const span = getActiveOrNoopSpan();
+      span.addEvent('Creating Transaction');
+
       const transaction = this.batchTransaction({session: session!}, options);
+      span.addEvent('Transaction Creation Done', {
+        id: transaction?.id?.toString(),
+      });
       this._releaseOnEnd(session!, transaction);
       transaction.begin((err, resp) => {
         if (err) {
@@ -2924,12 +2932,15 @@ class Database extends common.GrpcServiceObject {
     options?: TimestampBounds
   ): PartialResultStream {
     const proxyStream: Transform = through.obj();
+    const span = getActiveOrNoopSpan();
 
     this.pool_.getSession((err, session) => {
       if (err) {
         proxyStream.destroy(err);
         return;
       }
+
+      span.addEvent('Using Session', {'session.id': session?.id});
 
       const snapshot = session!.snapshot(options, this.queryOptions_);
 
@@ -2951,6 +2962,7 @@ class Database extends common.GrpcServiceObject {
             if (session) {
               session.lastError = err as grpc.ServiceError;
             }
+            span.addEvent('No session available', {'session.id': session?.id});
             // Remove the current data stream from the end user stream.
             dataStream.unpipe(proxyStream);
             dataStream.removeListener('end', endListener);
@@ -3295,12 +3307,16 @@ class Database extends common.GrpcServiceObject {
     options?: BatchWriteOptions
   ): NodeJS.ReadableStream {
     const proxyStream: Transform = through.obj();
+    const span = getActiveOrNoopSpan();
 
     this.pool_.getSession((err, session) => {
       if (err) {
         proxyStream.destroy(err);
         return;
       }
+
+      span.addEvent('Using Session', {'session.id': session?.id});
+
       const gaxOpts = extend(true, {}, options?.gaxOptions);
       const reqOpts = Object.assign(
         {} as spannerClient.spanner.v1.BatchWriteRequest,
@@ -3332,6 +3348,7 @@ class Database extends common.GrpcServiceObject {
             if (session) {
               session.lastError = err as grpc.ServiceError;
             }
+            span.addEvent('No session available', {'session.id': session?.id});
             // Remove the current data stream from the end user stream.
             dataStream.unpipe(proxyStream);
             dataStream.end();
