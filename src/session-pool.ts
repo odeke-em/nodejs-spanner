@@ -24,9 +24,7 @@ import {Transaction} from './transaction';
 import {NormalCallback} from './common';
 import {GoogleError, grpc, ServiceError} from 'google-gax';
 import trace = require('stack-trace');
-import {
-  getActiveOrNoopSpan,
-} from './instrument';
+import {getActiveOrNoopSpan} from './instrument';
 
 /**
  * @callback SessionPoolCloseCallback
@@ -803,7 +801,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    */
   async _destroy(session: Session): Promise<void> {
     const span = getActiveOrNoopSpan();
-
     try {
       await this._requests.add(() => session.delete());
     } catch (e) {
@@ -899,12 +896,10 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
    */
   async _getSession(startTime: number): Promise<Session> {
     const span = getActiveOrNoopSpan();
-
     if (this._hasSessionUsableFor()) {
       span.addEvent('Cache hit: has usable session');
       return this._borrowNextAvailableSession();
     }
-
     if (this.isFull && this.options.fail!) {
       span.addEvent('Session pool is full and failFast=true');
       throw new SessionPoolExhaustedError(this._getLeaks());
@@ -964,7 +959,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
       let amount = this.options.incStep
         ? this.options.incStep
         : DEFAULTS.incStep!;
-
       // Create additional sessions if the configured minimum has not been reached.
       const min = this.options.min ? this.options.min : 0;
       if (this.size + this.totalPending + amount < min) {
@@ -974,7 +968,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
       if (amount + this.size > this.options.max!) {
         amount = this.options.max! - this.size;
       }
-
       if (amount > 0) {
         this._pending += amount;
         promises.push(

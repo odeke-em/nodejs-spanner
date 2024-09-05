@@ -45,7 +45,6 @@ import IQueryOptions = google.spanner.v1.ExecuteSqlRequest.IQueryOptions;
 import IRequestOptions = google.spanner.v1.IRequestOptions;
 import {Database, Spanner} from '.';
 import ReadLockMode = google.spanner.v1.TransactionOptions.ReadWrite.ReadLockMode;
-import {getActiveOrNoopSpan, setSpanError} from './instrument';
 
 export type Rows = Array<Row | Json>;
 const RETRY_INFO_TYPE = 'type.googleapis.com/google.rpc.retryinfo';
@@ -1955,9 +1954,6 @@ export class Transaction extends Dml {
     optionsOrCallback?: CommitOptions | CallOptions | CommitCallback,
     cb?: CommitCallback
   ): void | Promise<CommitResponse> {
-    const span = getActiveOrNoopSpan();
-    span.addEvent('Starting Commit');
-
     const options =
       typeof optionsOrCallback === 'object' ? optionsOrCallback : {};
     const callback =
@@ -1975,16 +1971,7 @@ export class Transaction extends Dml {
     } else if (!this._useInRunner) {
       reqOpts.singleUseTransaction = this._options;
     } else {
-      this.begin().then(
-        () => {
-          this.commit(options, callback);
-        },
-        err => {
-          setSpanError(span, err);
-          span.addEvent('Commit failed');
-          callback(err);
-        }
-      );
+      this.begin().then(() => this.commit(options, callback), callback);
       return;
     }
 
@@ -2028,13 +2015,6 @@ export class Transaction extends Dml {
           );
         }
         err = Transaction.decorateCommitError(err as ServiceError, mutations);
-
-        if (err) {
-          setSpanError(span, err);
-          span.addEvent('Commit failed');
-        } else {
-          span.addEvent('Commit Done');
-        }
 
         callback!(err as ServiceError | null, resp);
       }

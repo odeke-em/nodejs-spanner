@@ -4994,6 +4994,11 @@ describe('Spanner with mock server', () => {
     });
   });
 
+  // TODO: Refactor this file's Spanner creation to make it more
+  // self contained and remove the tight coupling that requires
+  // and tests the database/instance suffix is an iteration of
+  // each afresh invocation of newTestDatabase, which has been
+  // causing test flakes.
   it('Check for span annotations', () => {
     const exporter = new InMemorySpanExporter();
     const provider = new NodeTracerProvider({

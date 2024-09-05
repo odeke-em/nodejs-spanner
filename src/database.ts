@@ -822,20 +822,20 @@ class Database extends common.GrpcServiceObject {
         callback!(err as ServiceError, null, undefined);
         return;
       }
-
-      const span = getActiveOrNoopSpan();
-      span.addEvent('Creating BatchTransaction');
-
       const transaction = this.batchTransaction({session: session!}, options);
       this._releaseOnEnd(session!, transaction);
       transaction.begin((err, resp) => {
-        span.addEvent('BatchTransaction Creation Done', {
-          id: transaction?.id?.toString(),
-        });
+        const span = getActiveOrNoopSpan();
         if (err) {
+          if (isSessionNotFoundError(err)) {
+            span.addEvent('No session available', {
+              'session.id': session?.id,
+            });
+          }
           callback!(err, null, resp!);
           return;
         }
+        span.addEvent('Using Session', {'session.id': session?.id});
         callback!(null, transaction, resp!);
       });
     });
@@ -2039,9 +2039,9 @@ class Database extends common.GrpcServiceObject {
       const snapshot = session!.snapshot(options, this.queryOptions_);
 
       snapshot.begin(err => {
+        const span = getActiveOrNoopSpan();
         if (err) {
           if (isSessionNotFoundError(err)) {
-            const span = getActiveOrNoopSpan();
             span.addEvent('No session available', {
               'session.id': session?.id,
             });
@@ -2049,6 +2049,7 @@ class Database extends common.GrpcServiceObject {
             this.pool_.release(session!);
             this.getSnapshot(options, callback!);
           } else {
+            span.addEvent('Using Session', {'session.id': session?.id});
             this.pool_.release(session!);
             callback!(err);
           }
@@ -2133,7 +2134,14 @@ class Database extends common.GrpcServiceObject {
         transaction!.excludeTxnFromChangeStreams();
       }
       if (!err) {
+        const span = getActiveOrNoopSpan();
+        span.addEvent('Using Session', {'session.id': session?.id});
         this._releaseOnEnd(session!, transaction!);
+      } else if (isSessionNotFoundError(err as grpc.ServiceError)) {
+        const span = getActiveOrNoopSpan();
+        span.addEvent('No session available', {
+          'session.id': session?.id,
+        });
       }
       cb!(err as grpc.ServiceError | null, transaction);
     });
@@ -2360,6 +2368,8 @@ class Database extends common.GrpcServiceObject {
         callback!(err as ServiceError, null);
         return;
       }
+      const span = getActiveOrNoopSpan();
+      span.addEvent('Using Session', {'session.id': session?.id});
       config.reqOpts.session = session!.formattedName_;
       this.request<Session>(config, (err, ...args) => {
         pool.release(session!);
@@ -2401,10 +2411,17 @@ class Database extends common.GrpcServiceObject {
     }
     waitForSessionStream.on('reading', () => {
       pool.getSession((err, session_) => {
+        const span = getActiveOrNoopSpan();
         if (err) {
+          if (isSessionNotFoundError(err as grpc.ServiceError)) {
+            span.addEvent('No session available', {
+              'session.id': session?.id,
+            });
+          }
           destroyStream(err as ServiceError);
           return;
         }
+        span.addEvent('Using Session', {'session.id': session_?.id});
         session = session_!;
         config.reqOpts.session = session!.formattedName_;
         requestStream = self.requestStream(config);
@@ -3100,11 +3117,11 @@ class Database extends common.GrpcServiceObject {
         : {};
 
     this.pool_.getSession((err, session?, transaction?) => {
+      const span = getActiveOrNoopSpan();
       if (err && isSessionNotFoundError(err as grpc.ServiceError)) {
-          const span = getActiveOrNoopSpan();
-          span.addEvent('No session available', {
-            'session.id': session?.id,
-          });
+        span.addEvent('No session available', {
+          'session.id': session?.id,
+        });
         this.runTransaction(options, runFn!);
         return;
       }
@@ -3128,14 +3145,17 @@ class Database extends common.GrpcServiceObject {
       );
 
       runner.run().then(release, err => {
+        const span = getActiveOrNoopSpan();
         if (isSessionNotFoundError(err)) {
-          const span = getActiveOrNoopSpan();
           span.addEvent('No session available', {
             'session.id': session?.id,
           });
           release();
           this.runTransaction(options, runFn!);
         } else {
+          if (!err) {
+            span.addEvent('Using Session', {'session.id': session!.id});
+          }
           setImmediate(runFn!, err);
           release();
         }
@@ -3222,7 +3242,7 @@ class Database extends common.GrpcServiceObject {
         ? (optionsOrRunFn as RunTransactionOptions)
         : {};
 
-    let sessionId: string = '';
+    let sessionId = '';
     const getSession = this.pool_.getSession.bind(this.pool_);
     // Loop to retry 'Session not found' errors.
     // (and yes, we like while (true) more than for (;;) here)
@@ -3463,6 +3483,7 @@ class Database extends common.GrpcServiceObject {
         ? (optionsOrCallback as CallOptions)
         : {};
     this.pool_.getSession((err, session?, transaction?) => {
+      const span = getActiveOrNoopSpan();
       if (err && isSessionNotFoundError(err as grpc.ServiceError)) {
         const span = getActiveOrNoopSpan();
         span.addEvent('No session available', {
@@ -3475,6 +3496,7 @@ class Database extends common.GrpcServiceObject {
         cb!(err as grpc.ServiceError);
         return;
       }
+      span.addEvent('Using Session', {'session.id': session?.id});
       this._releaseOnEnd(session!, transaction!);
       transaction?.setQueuedMutations(mutations.proto());
       return transaction?.commit(options, cb!);
