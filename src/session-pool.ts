@@ -26,8 +26,6 @@ import {GoogleError, grpc, ServiceError} from 'google-gax';
 import trace = require('stack-trace');
 import {
   getActiveOrNoopSpan,
-  setSpanError,
-  setSpanErrorAndException,
 } from './instrument';
 
 /**
@@ -638,9 +636,7 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
     const span = getActiveOrNoopSpan();
     if (!this.isOpen) {
       span.addEvent('SessionPool is closed');
-      const err = new GoogleError(errors.Closed);
-      setSpanErrorAndException(span, err);
-      throw err;
+      throw new GoogleError(errors.Closed);
     }
 
     // Get the stacktrace of the caller before we call any async methods, as calling an async method will break the stacktrace.
@@ -655,7 +651,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
       const elapsed = Date.now() - startTime;
 
       if (elapsed >= timeout!) {
-        setSpanErrorAndException(span, 'timed out');
         span.addEvent('Could not acquire session due to an exceeded timeout');
         throw new GoogleError(errors.Timeout);
       }
@@ -781,7 +776,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
         span.addEvent(
           `Requested for ${nRequested} sessions returned ${nReturned}`
         );
-        setSpanErrorAndException(span, e as Error);
         throw e;
       }
 
@@ -814,7 +808,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
       await this._requests.add(() => session.delete());
     } catch (e) {
       this.emit('error', e);
-      setSpanErrorAndException(span, e as Error);
     }
   }
 
@@ -914,9 +907,7 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
 
     if (this.isFull && this.options.fail!) {
       span.addEvent('Session pool is full and failFast=true');
-      const err = new SessionPoolExhaustedError(this._getLeaks());
-      setSpanErrorAndException(span, err);
-      throw err;
+      throw new SessionPoolExhaustedError(this._getLeaks());
     }
 
     let removeOnceCloseListener: Function;
@@ -929,7 +920,6 @@ export class SessionPool extends EventEmitter implements SessionPoolInterface {
       new Promise((_, reject) => {
         const onceCloseListener = () => {
           const err = new GoogleError(errors.Closed);
-          setSpanError(span, err);
           reject(err);
         };
         this.once('close', onceCloseListener);

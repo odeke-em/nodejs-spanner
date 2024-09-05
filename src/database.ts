@@ -2041,6 +2041,7 @@ class Database extends common.GrpcServiceObject {
       snapshot.begin(err => {
         if (err) {
           if (isSessionNotFoundError(err)) {
+            const span = getActiveOrNoopSpan();
             span.addEvent('No session available', {
               'session.id': session?.id,
             });
@@ -2943,6 +2944,7 @@ class Database extends common.GrpcServiceObject {
         return;
       }
 
+      const span = getActiveOrNoopSpan();
       span.addEvent('Using Session', {'session.id': session?.id});
 
       const snapshot = session!.snapshot(options, this.queryOptions_);
@@ -3327,7 +3329,6 @@ class Database extends common.GrpcServiceObject {
     options?: BatchWriteOptions
   ): NodeJS.ReadableStream {
     const proxyStream: Transform = through.obj();
-    const span = getActiveOrNoopSpan();
 
     this.pool_.getSession((err, session) => {
       if (err) {
@@ -3335,6 +3336,7 @@ class Database extends common.GrpcServiceObject {
         return;
       }
 
+      const span = getActiveOrNoopSpan();
       span.addEvent('Using Session', {'session.id': session?.id});
 
       const gaxOpts = extend(true, {}, options?.gaxOptions);
