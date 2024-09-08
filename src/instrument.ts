@@ -262,17 +262,15 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
 
   const traced: TraceWrapped = function (
     this: any
-  ): void | Promise<unknown> | PartialResultStream | EventEmitter {
+  ): void | Promise<unknown> | PartialResultStream | EventEmitter | AsyncIterable<unknown> {
     const lastArg = arguments[arguments.length - 1];
     const hasCallback = typeof lastArg === 'function';
 
     return startTrace(spanName, {}, span => {
-      console.log(`\x1b[31m${spanName}\x1b[00m`);
+      // console.log(`\x1b[31m${spanName}\x1b[00m`);
       if (hasCallback) {
-        // This is a callback
-        // Wrap our method with a callback.
         const callback = lastArg;
-        arguments[arguments.length - 1] = function (...args: any) {
+        const wrappedFn = function (...args: any) {
           const errIndex = Array.from(arguments).findIndex(
             arg => arg instanceof Error
           );
@@ -281,6 +279,11 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
           span.end();
           callback(...args);
         };
+
+        // Let's copy the name of the wrapping callback
+        // to be that of the original callback function.
+        Object.defineProperty(wrappedFn, 'name', {value: callback.name});
+        arguments[arguments.length - 1] = wrappedFn;
 
         original.apply(this, arguments);
         return;
@@ -306,7 +309,7 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
         });
 
         const eventNames = originalStream.eventNames();
-        console.log(spanName, 'eventNames', eventNames);
+        // console.log(spanName, 'eventNames', eventNames);
 
         const closeRelatedEvents = [
           'close',
@@ -320,7 +323,6 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
         });
         return originalStream;
       } else if (originalResult instanceof EventEmitter) {
-        console.log(spanName, 'as eventEmitter');
         const originalStream = originalResult as EventEmitter;
         originalStream.on('error', err => {
           setSpanError(span, err);
@@ -336,8 +338,8 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
           originalStream.on(eventName, () => span.end());
         });
         return originalStream;
-      } else {
-        console.log('as promise', spanName);
+      } else if (originalResult.constructor.name === 'Promise') {
+        // console.log('as promise', spanName);
         // This is a promise
         const originalPromise = originalResult;
         // Extract the original promise then create a fresh one.
@@ -356,6 +358,9 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
         });
 
         return passThroughPromise;
+      } else {
+        console.log('alternative', originalResult.constructor.name);
+        return originalResult;
       }
     });
   };
@@ -365,12 +370,30 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
 }
 
 export function traceWrap(klass: Function, methodNames: string[]) {
+  if (!klass || !methodNames || methodNames.length < 1) {
+    return;
+  }
+  if (!klass.prototype) {
+    return;
+  }
+
   methodNames.forEach(methodName => {
     const original = klass.prototype[methodName];
     const spanName = klass.name + '.' + methodName;
     if (!original) {
       throw new Error(`Missing/mispelled method ${spanName}`);
     }
+
+    // There are some return types for which we don't want
+    // to trace for example AsyncIterable, for which we'd have.
+    /*
+    type returnType = ReturnType<typeof original>;
+    if (returnType.prototype implements AsyncIterable<any>) {
+        console.log('asyncIterable');
+        return;
+    }
+    */
+
     klass.prototype[methodName] = traceWrapIt(spanName, original);
   });
 }
