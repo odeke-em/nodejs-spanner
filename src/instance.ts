@@ -1669,7 +1669,7 @@ traceWrap(Instance, [
   'get',
   'getDatabases',
   'getMetadata',
-  'setMetadata',
+  // 'setMetadata',
 ]);
 
 /*! Developer Documentation

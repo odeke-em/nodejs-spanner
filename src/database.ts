@@ -3878,7 +3878,7 @@ traceWrap(Database, [
   'runPartitionedUpdate',
   'runStream',
   'runTransaction',
-  'runTransactionAsync',
+  // TODO: enable 'runTransactionAsync',
 ]);
 
 /**

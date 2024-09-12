@@ -249,25 +249,34 @@ interface TraceWrapped extends Function {
   traceWrapped?: boolean;
 }
 
-function traceWrapIt(spanName: string, original: TraceWrapped) {
-  // original would be for example:
-  // const [rows] = await database.run('SELECT 1');
-  // or
-  // database.run('SELECT 1', (err, rows) => {
-  //    ...
-  // });
+function performWrap(spanName: string, original: TraceWrapped) {
+  /*
+  original would be for example:
+    const [rows] = await database.run('SELECT 1');
+  or
+    database.run('SELECT 1', (err, rows) => {
+        ...
+    });
+  */
   if (original.traceWrapped) {
     return original;
   }
 
   const traced: TraceWrapped = function (
     this: any
-  ): void | Promise<unknown> | PartialResultStream | EventEmitter | AsyncIterable<unknown> {
+  ):
+    | void
+    | Promise<unknown>
+    | PartialResultStream
+    | EventEmitter
+    | AsyncIterable<unknown> {
     const lastArg = arguments[arguments.length - 1];
     const hasCallback = typeof lastArg === 'function';
 
     return startTrace(spanName, {}, span => {
-      // console.log(`\x1b[31m${spanName}\x1b[00m`);
+      // Case 1. We have a callback function, plainly wrap it
+      // with a passthrough function that starts the span on invocation
+      // and then ends it once results are returned from the original.
       if (hasCallback) {
         const callback = lastArg;
         const wrappedFn = function (...args: any) {
@@ -292,8 +301,9 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
       const originalResult = original.apply(this, arguments);
       // console.log('className', Object.entries(originalResult));
 
+      // Case 2. We have a PartialResultStream, check the event emitters
+      // and end the span once the finished event is issued.
       if (originalResult instanceof PartialResultStream) {
-        // We've got a Stream.
         const originalStream = originalResult as PartialResultStream;
         if (originalStream.on) {
           originalStream.on('error', err => {
@@ -309,7 +319,6 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
         });
 
         const eventNames = originalStream.eventNames();
-        // console.log(spanName, 'eventNames', eventNames);
 
         const closeRelatedEvents = [
           'close',
@@ -322,7 +331,11 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
           originalStream.on(eventName, () => span.end());
         });
         return originalStream;
-      } else if (originalResult instanceof EventEmitter) {
+      }
+
+      // Case 3. We have an EventEmitter so for each event that is related
+      // to completion should be listened on, allow span ending.
+      if (originalResult instanceof EventEmitter) {
         const originalStream = originalResult as EventEmitter;
         originalStream.on('error', err => {
           setSpanError(span, err);
@@ -338,11 +351,17 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
           originalStream.on(eventName, () => span.end());
         });
         return originalStream;
-      } else if (originalResult.constructor.name === 'Promise') {
+      }
+
+      // Case 4. We have a Promise and for that create a wrapping
+      // Promise with a finally event that'll end the span..
+      if (originalResult.constructor.name === 'Promise') {
         // console.log('as promise', spanName);
         // This is a promise
         const originalPromise = originalResult;
         // Extract the original promise then create a fresh one.
+        // TODO: Retrieve the runtime type of original and bound it to the promise
+        // type returnType = ReturnType<typeof original>;
         const passThroughPromise = new Promise((resolve, reject) => {
           originalPromise
             .then(result => {
@@ -358,10 +377,15 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
         });
 
         return passThroughPromise;
-      } else {
-        console.log('alternative', originalResult.constructor.name);
-        return originalResult;
       }
+
+      console.log(typeof originalResult);
+      console.dir(originalResult, {depth: 100, colors: true, showHidden: true});
+      // Case 5. We don't know how to handle this type, so throw an exception
+      // complaining loudly so that we can handle it.
+      throw new Error(
+        `Unknown trace wrapper for ${originalResult.constructor.name}`
+      );
     });
   };
 
@@ -370,10 +394,9 @@ function traceWrapIt(spanName: string, original: TraceWrapped) {
 }
 
 export function traceWrap(klass: Function, methodNames: string[]) {
-  if (!klass || !methodNames || methodNames.length < 1) {
-    return;
-  }
-  if (!klass.prototype) {
+  const canWrap =
+    klass && klass.prototype && methodNames && methodNames.length > 0;
+  if (!canWrap) {
     return;
   }
 
@@ -394,6 +417,6 @@ export function traceWrap(klass: Function, methodNames: string[]) {
     }
     */
 
-    klass.prototype[methodName] = traceWrapIt(spanName, original);
+    klass.prototype[methodName] = performWrap(spanName, original);
   });
 }

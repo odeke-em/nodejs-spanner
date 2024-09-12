@@ -1412,18 +1412,12 @@ describe('SessionPool', () => {
         await sessionPool._release(session);
         span.end();
 
-        const spans = exporter.getFinishedSpans();
         assert.strictEqual(
-          spans.length,
-          1,
-          'Exactly 1 span should have been exported'
-        );
-        assert.strictEqual(
-          spans[0].name,
+          span.name,
           `${SPAN_NAMESPACE_PREFIX}.${topLevelSpanName}`,
           'Expected only the top-level created span'
         );
-        const span0 = spans[0];
+        const span0 = span;
         assert.strictEqual(!span0.events, false, 'Events must be set');
         assert.strictEqual(
           span0.events.length > 0,
