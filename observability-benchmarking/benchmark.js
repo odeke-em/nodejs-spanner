@@ -18,7 +18,15 @@
 
 const {MutationSet, Spanner} = require('@google-cloud/spanner');
 
-async function main(projectId, instanceId, databaseId) {
+async function main(cmd, projectId, instanceId, databaseId) {
+  if (cmd === 'compare') { // Compare benchmarks.
+      const [v1JSONFile, v2JSONFile] = process.args.slice(1);
+      const v1JSON = JSON.parse(fs.readFileSync(v1JSONFile));
+      const v2JSON = JSON.parse(fs.readFileSync(v2JSONFile));
+      return compareDifferences(v1JSON, v2JSON);
+  }
+
+  // Otherwise run the benchmarks.
   const spanner = new Spanner({
     projectId: projectId,
     observabilityOptions: {
@@ -43,64 +51,110 @@ async function main(projectId, instanceId, databaseId) {
     databaseRunWithDeleteFromNonExistentTable,
   ]; 
 
-  console.log('Running benchmarks!');
-  const withSyntaxErrors = [false];
+  const nRuns = 100;
+  const benchmarkValues = {};
 
-  const latencies = new Map();
-  for (const fn of runners) {
+  let k = 0;
+  for (k=0; k < runners.length; k++){
+    const fn = runners[k];
     const method = fn.name;
-    console.log(method);
-    for (const withSyntaxError of withSyntaxErrors) {
-      const latencyL = [];
-      let i = 0;
-      for (i = 0; i < 100; i++) {
+    console.log(`Running ${k+1}/${runners.length} ${method}`);
+    const latencyL = [];
+    const ramL = [];
+    let i = 0;
+
+    for (i = 0; i < nRuns; i++) {
         const startTime = process.hrtime.bigint();
+        const startHeapUsedBytes = process.memoryUsage().heapUsed;
         try {
           await fn(database);
         } catch (e) {
         } finally {
           latencyL.push(process.hrtime.bigint() - startTime);
-        }
+          ramL.push(process.memoryUsage().heapUsed - startHeapUsedBytes);
       }
+    }
 
-      latencyL.sort((a, b) => {
+      const lessComparator = (a, b) => {
         if (a < b) return -1;
         if (a > b) return 1;
         return 0;
-      });
+      };
+      latencyL.sort(lessComparator);
+      ramL.sort(lessComparator);
 
-      if (withSyntaxError) {
-        processLatencies(method +' withSyntaxError', latencyL);
-      } else {
-        processLatencies(method, latencyL);
-      }
-    }
+      benchmarkValues[method] = {
+          ram: percentiles(method, ramL, 'bytes'),
+          latency:  percentiles(method, latencyL, 'time'),
+      };
   }
+
+  BigInt.prototype.toJSON = function () {
+    return Number(this);
+  };
+  console.log(JSON.stringify(benchmarkValues));
 }
 
-function processLatencies(method, latencyL) {
-  const n = latencyL.length;
-  const p50 = humanize(latencyL[Math.floor(n * 0.5)]);
-  const p75 = humanize(latencyL[Math.floor(n * 0.75)]);
-  const p95 = humanize(latencyL[Math.floor(n * 0.95)]);
-  const p99 = humanize(latencyL[Math.floor(n * 0.99)]);
-  console.log(
-    `\tp50: ${p50}\n\tp75: ${p75}\n\tp95: ${p95}\n\tp99: ${p99}\n`
-  );
+function percentiles(method, sortedValues, kind) {
+  const n = sortedValues.length;
+  const p50 = sortedValues[Math.floor(n * 0.5)];
+  const p75 = sortedValues[Math.floor(n * 0.75)];
+  const p90 = sortedValues[Math.floor(n * 0.90)];
+  const p95 = sortedValues[Math.floor(n * 0.95)];
+  const p99 = sortedValues[Math.floor(n * 0.99)];
+  // console.log(
+  //   `\tp50: ${p50}\n\tp75: ${p75}\n\tp95: ${p95}\n\tp99: ${p99}\n`
+  // );
+  return {
+      p50: p50, p75: p75, p90: p90, p95: p95, p99:p99,
+      p50_s: humanize(p50, kind),
+      p75_s: humanize(p75, kind),
+      p90_s: humanize(p90, kind),
+      p95_s: humanize(p95, kind),
+      p99_s: humanize(p99, kind),
+  };
 }
 
-const units = ['ns', 'us', 'ms', 's'];
+function humanize(values, kind) {
+    let converterFn = humanizeTime;
+    if (kind === 'bytes') {
+        converterFn = humanizeBytes;
+    }
+    return converterFn(values);
+}
 
-function humanize(ns) {
+const secondUnits = ['ns', 'us', 'ms', 's'];
+const pastSecondUnits = [['min', 60], ['hr', 60], ['day', 24], ['week', 7], ['month', 30]];
+function humanizeTime(ns) {
   let value = ns;
-  for (const unit of units) {
+  for (const unit of secondUnits) {
     if (value < 1000) {
         return `${value} ${unit}`;
     }
-    value = value/1000n;
+    value /= 1000n;
   }
   
-  return `${value} ${units[units.length-1]}`;
+  for (const unitPlusValue of pastSecondUnits) {
+    const [unitName, divisor] = unitPlusValue;
+    if (value < divisor) {
+        return `${value} ${unitName}`;
+    }
+    value = value/divisor;
+  }
+  return `${value} ${units[units.length-1][0]}`;
+}
+
+const bytesUnits = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'ExB'];
+function humanizeBytes(b) {
+  let value = b;
+  for (const unit of bytesUnits) {
+    if (value < 1024) {
+      return `${value.toFixed(3)} ${unit}`;
+    }
+    value = value/1024;
+  }
+
+  return `${value.toFixed(3)} ${bytesUnits[bytesUnits.length-1]}`;
 }
 
 async function dqlSelect1(database) {
@@ -183,6 +237,40 @@ async function databaseWriteAtLeastOnce(database) {
 
   const [response, err] = await database.writeAtLeastOnce(mutations, {});
 } 
+
+function compareDifferences(v1, v2) {
+    const percents = [];
+    for (const key of v1) {
+        const defV1 = v1[key];
+        const ramV1 = defV1.ram;
+        const latencyV1 = defV1.latency;
+        const defV2 = v2[key];
+        const ramV2 = defV2.ram;
+        const latencyV2 = defV2.latency;
+
+        percents.push({
+            key: key,
+            ram: calculatePercent(ramV1, ramV2),
+            latency: calculatePercent(latencyV1, latencyV2),
+        });
+    }
+
+    // Deterministically print out results sorted by name.
+    percents.sort((a, b) => {
+        if (a.key < b.key) return -1;
+        if (a.key > b.key) return +1;
+        return 0;
+    });
+
+    console.log(`Method             RAM %       Latency %`);
+    for (const value of percents) {
+        console.log(`${value.key} ${value.ram.toString(2)} ${value.latency.toString(2)}`);
+    }
+}
+
+function calculatePercent(orig, updated) {
+  return (updated-orig)*100/orig;
+}
 
 process.on('unhandledRejection', err => {
   console.error(err.message);
