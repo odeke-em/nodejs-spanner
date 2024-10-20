@@ -17,15 +17,23 @@
 'use strict';
 
 const {MutationSet, Spanner} = require('@google-cloud/spanner');
+const {readFileSync} = require('fs');
 
-async function main(cmd, projectId, instanceId, databaseId) {
-  if (cmd === 'compare') { // Compare benchmarks.
-      const [v1JSONFile, v2JSONFile] = process.args.slice(1);
-      const v1JSON = JSON.parse(fs.readFileSync(v1JSONFile));
-      const v2JSON = JSON.parse(fs.readFileSync(v2JSONFile));
-      return compareDifferences(v1JSON, v2JSON);
+async function runComparisons(v1JSONFile, v2JSONFile) {
+  const v1JSON = JSON.parse(readFileSync(v1JSONFile));
+  const v2JSON = JSON.parse(readFileSync(v2JSONFile));
+  return compareDifferences(v1JSON, v2JSON);
+}
+
+function main() {
+  if (process.argv[2] === 'compare') {
+    runComparisons(...process.argv.slice(3));
+  } else {
+    runBenchmarking(...process.argv.slice(2));
   }
+}
 
+async function runBenchmarking(projectId, instanceId, databaseId) {
   // Otherwise run the benchmarks.
   const spanner = new Spanner({
     projectId: projectId,
@@ -240,7 +248,7 @@ async function databaseWriteAtLeastOnce(database) {
 
 function compareDifferences(v1, v2) {
     const percents = [];
-    for (const key of v1) {
+    for (const key in v1) {
         const defV1 = v1[key];
         const ramV1 = defV1.ram;
         const latencyV1 = defV1.latency;
@@ -250,8 +258,16 @@ function compareDifferences(v1, v2) {
 
         percents.push({
             key: key,
-            ram: calculatePercent(ramV1, ramV2),
-            latency: calculatePercent(latencyV1, latencyV2),
+            ramP50:calculatePercent(ramV1.p50, ramV2.p50).toFixed(2),
+            ramP75:calculatePercent(ramV1.p75, ramV2.p75).toFixed(2),
+            ramP90:calculatePercent(ramV1.p90, ramV2.p90).toFixed(2),
+            ramP95:calculatePercent(ramV1.p95, ramV2.p95).toFixed(2),
+            ramP99:calculatePercent(ramV1.p95, ramV2.p99).toFixed(2),
+            latP50: calculatePercent(latencyV1.p50, latencyV2.p50).toFixed(2),
+            latP75: calculatePercent(latencyV1.p75, latencyV2.p75).toFixed(2),
+            latP90: calculatePercent(latencyV1.p90, latencyV2.p90).toFixed(2),
+            latP95: calculatePercent(latencyV1.p95, latencyV2.p95).toFixed(2),
+            latP99: calculatePercent(latencyV1.p95, latencyV2.p99).toFixed(2),
         });
     }
 
@@ -262,9 +278,12 @@ function compareDifferences(v1, v2) {
         return 0;
     });
 
-    console.log(`Method             RAM %       Latency %`);
     for (const value of percents) {
-        console.log(`${value.key} ${value.ram.toString(2)} ${value.latency.toString(2)}`);
+        console.log(`${value.key}`);
+        console.log(`\t      p50 (%)  p75 (%)  p90 (%)  p95 (%)  p99 (%)`);
+        console.log(`\tRAM: ${value.ramP50}    ${value.ramP75}      ${value.ramP90}   ${value.ramP95}   ${value.ramP99}`);
+        console.log(`\tLat: ${value.latP50}    ${value.latP75}      ${value.latP90}   ${value.latP95}   ${value.latP99}`);
+        console.log('');
     }
 }
 
@@ -276,4 +295,4 @@ process.on('unhandledRejection', err => {
   console.error(err.message);
   process.exitCode = 1;
 });
-main(...process.argv.slice(2));
+main();
