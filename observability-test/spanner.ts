@@ -20,6 +20,7 @@ import {google} from '../protos/protos';
 import {Database, Instance, Spanner} from '../src';
 import {MutationSet} from '../src/transaction';
 import protobuf = google.spanner.v1;
+import {startTrace} from '../src/instrument';
 import * as mock from '../test/mockserver/mockspanner';
 import * as mockInstanceAdmin from '../test/mockserver/mockinstanceadmin';
 import * as mockDatabaseAdmin from '../test/mockserver/mockdatabaseadmin';
@@ -38,6 +39,8 @@ const {
 const {
   AsyncHooksContextManager,
 } = require('@opentelemetry/context-async-hooks');
+import {promisify} from '@google-cloud/promisify';
+import {runBenchmarks} from './benchmark';
 
 const {ObservabilityOptions} = require('../src/instrument');
 import {SessionPool} from '../src/session-pool';
@@ -1248,6 +1251,33 @@ describe('E2E traces with async/await', async () => {
 
     main(() => {
       assertAsyncAwaitExpectations();
+      done();
+    });
+  });
+});
+
+const dummySleepMs = 10;
+function dummy() {
+  new Promise(resolve => setTimeout(resolve, dummySleepMs));
+}
+
+function dummyTraced() {
+  new Promise<void>(resolve => {
+    startTrace('dummyTraced', {}, span => {
+      setTimeout(() => {
+        span.end();
+        resolve();
+      }, dummySleepMs);
+    });
+  });
+}
+
+describe('Benchmarking', () => {
+  it('Base startTrace', done => {
+    const runners = [dummy, dummyTraced];
+
+    runBenchmarks(runners, results => {
+      console.log('oresults', results);
       done();
     });
   });

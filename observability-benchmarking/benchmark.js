@@ -59,7 +59,7 @@ async function runBenchmarking(projectId, instanceId, databaseId) {
     databaseRunWithDeleteFromNonExistentTable,
   ]; 
 
-  const nRuns = 100;
+  const nRuns = 1000;
   const benchmarkValues = {};
 
   let k = 0;
