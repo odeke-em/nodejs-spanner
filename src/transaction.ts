@@ -456,7 +456,7 @@ export class Snapshot extends EventEmitter {
           gaxOpts,
           headers: headers,
         },
-        async (
+        (
           err: null | grpc.ServiceError,
           resp: spannerClient.spanner.v1.ITransaction
         ) => {
@@ -784,9 +784,7 @@ export class Snapshot extends EventEmitter {
           if (err) {
             setSpanError(span, err);
           }
-          if (span.isRecording()) {
-            span.end();
-          }
+          span.end();
         });
       }
 
@@ -1369,9 +1367,7 @@ export class Snapshot extends EventEmitter {
           if (err) {
             setSpanError(span, err as Error);
           }
-          if (span.isRecording()) {
-            span.end();
-          }
+          span.end();
         });
 
       return resultStream;
