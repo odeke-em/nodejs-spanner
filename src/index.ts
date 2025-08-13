@@ -61,6 +61,7 @@ import {
   GoogleError,
   ClientOptions,
 } from 'google-gax';
+import {ApiError} from '@google-cloud/common';
 import {google, google as instanceAdmin} from '../protos/protos';
 import IsolationLevel = google.spanner.v1.TransactionOptions.IsolationLevel;
 import {
@@ -91,8 +92,13 @@ import {
 } from './instrument';
 import {
   attributeXGoogSpannerRequestIdToActiveSpan,
+  extractRequestID,
+  injectRequestIDIntoConfig,
   injectRequestIDIntoError,
   nextSpannerClientId,
+  nthRequester,
+  RequestIdInterceptor,
+  XGoogRequestId,
 } from './request_id_header';
 import {PeriodicExportingMetricReader} from '@opentelemetry/sdk-metrics';
 import {MetricInterceptor} from './metrics/interceptor';
@@ -318,6 +324,7 @@ class Spanner extends GrpcService {
   private _isEmulatorEnabled: boolean;
   private static _isAFEServerTimingEnabled: boolean | undefined;
   readonly _nthClientId: number;
+  nthRequester_: nthRequester;
 
   /**
    * Placeholder used to auto populate a column with the commit timestamp.
@@ -496,6 +503,7 @@ class Spanner extends GrpcService {
     this._nthClientId = nextSpannerClientId();
     this._universeDomain = universeEndpoint;
     this.configureMetrics_();
+    this.nthRequester_ = noopNthRequester;
   }
 
   get universeDomain() {
@@ -1696,6 +1704,7 @@ class Spanner extends GrpcService {
       if (MetricsTracerFactory.enabled) {
         interceptors.push(MetricInterceptor);
       }
+      interceptors.push(RequestIdInterceptor);
       const requestFn = gaxClient[config.method].bind(
         gaxClient,
         reqOpts,
@@ -1717,18 +1726,33 @@ class Spanner extends GrpcService {
           args.length > 0 &&
           typeof args[args.length - 1] === 'function';
 
+        // TODO(@odeke-em): count the invocations given that GAX retries don't yet
+        // have call options for which we can track the attempts.
         switch (hasCallback) {
           case true: {
             const cb = args[args.length - 1];
             const priorArgs = args.slice(0, args.length - 1);
-            requestFn(...priorArgs, (...results) => {
+            const wrappedCb = (...results) => {
+              console.log(
+                '\x1b[32mcb.name',
+                config.method,
+                'results',
+                results,
+                '\n\n\n\n\x1b[00m',
+              );
               if (results && results.length > 0) {
                 const err = results[0] as Error;
                 injectRequestIDIntoError(config, err);
               }
 
               cb(...results);
-            });
+            };
+
+            requestFn(...priorArgs, gaxRetryerForRequestId(
+                wrappedCb,
+                config,
+                this.nthRequester_,
+              ));
             return;
           }
 
@@ -1736,20 +1760,25 @@ class Spanner extends GrpcService {
             const res = requestFn(...args);
             const stream = res as EventEmitter;
             if (stream) {
+              console.log('\x1b[37misAStream\x1b[00m');
               stream.on('error', err => {
+                console.log('\x1b[31mstream.err', err, '\n\n\n\n\x1b[00m');
                 injectRequestIDIntoError(config, err as Error);
               });
             }
 
             const originallyPromise = res instanceof Promise;
             if (!originallyPromise) {
+              console.log('\x1b[38mnot a promise\x1b[00m');
               return res;
             }
 
+            console.log('\x1b[37mpromise.resolving\x1b[00m');
             return new Promise((resolve, reject) => {
               requestFn(...args)
                 .then(resolve)
                 .catch(err => {
+                  console.log('\x1b[34mpromise.err', err, '\n\n\n\n\x1b[00m');
                   injectRequestIDIntoError(config, err as Error);
                   reject(err);
                 });
@@ -2152,6 +2181,10 @@ class Spanner extends GrpcService {
     }
     return codec.Struct.fromJSON(value);
   }
+
+  public _setNthRequester(nthRequester: nthRequester) {
+    this.nthRequester_ = nthRequester;
+  }
 }
 
 let cleanupCalled = false;
@@ -2354,6 +2387,59 @@ export {MutationGroup};
  * @type {Constructor}
  */
 export {MutationSet};
+
+function gaxRetryerForRequestId(
+  fn: Function,
+  config: any,
+  nthRequester: nthRequester,
+) {
+  let attempt = 0;
+
+  return function (...args) {
+    attempt++;
+    const reqIdStr = extractRequestID(config);
+    console.log(`gaxRetryer: \x1b[36m args in: ${args}: ${attempt}: reqId: ${reqIdStr}\x1b[00m`);
+    if (!reqIdStr || args.length < 1) {
+      return fn(...args);
+    }
+
+    var err = args.length[0] as Error;
+    if (!err) {
+      return fn(...args);
+    }
+
+    let reqId = new XGoogRequestId(reqIdStr);
+    if (retryableError(err)) {
+      // Increase the attempt number.
+      reqId.setAttempt(attempt);
+    } else {
+      // Generate the next nthRequest then update
+      reqId = reqId.setNthRequest(nthRequester._nextNthRequest()).setAttempt(1);
+      attempt = 0;
+    }
+
+    // Finally replace the request-id value.
+    injectRequestIDIntoConfig(config, reqId.toString());
+
+    // Now process the request
+    return fn(...args);
+  };
+}
+
+function retryableError(err: Error): boolean {
+  if (!err) {
+    return false;
+  }
+
+  const ae = err as ApiError;
+  return ae.code == grpc.status.UNAVAILABLE || ae.code == grpc.status.INTERNAL;
+}
+
+const noopNthRequester: nthRequester = {
+  _nextNthRequest: function (): number {
+    return -1;
+  },
+};
 
 /**
  * @type {object}
