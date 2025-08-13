@@ -93,6 +93,10 @@ interface withHeaders {
   headers: {[k: string]: string};
 }
 
+interface nthRequester {
+  _nextNthRequest(): number;
+}
+
 function extractRequestID(config: any): string {
   if (!config) {
     return '';
@@ -103,6 +107,17 @@ function extractRequestID(config: any): string {
     return hdrs.headers[X_GOOG_SPANNER_REQUEST_ID_HEADER];
   }
   return '';
+}
+
+function injectRequestIDIntoConfig(config: any, reqIdStr: string) {
+  if (!config) {
+    return;
+  }
+
+  const hdrs = config as withHeaders;
+  if (hdrs && hdrs.headers) {
+    hdrs.headers[X_GOOG_SPANNER_REQUEST_ID_HEADER] = reqIdStr;
+  }
 }
 
 function injectRequestIDIntoError(config: any, err: Error) {
@@ -207,17 +222,134 @@ function attributeXGoogSpannerRequestIdToActiveSpan(config: any) {
 
 const X_GOOG_REQ_ID_REGEX = /^1\.[0-9A-Fa-f]{8}(\.\d+){3}\.\d+/;
 
+export const RequestIdInterceptor = (options, nextCall) => {
+  const methodDefinition = options.method_definition;
+  return new grpc.InterceptingCall(nextCall(options), {
+    start: (metadata, listener, next) => {
+      const requestId = metadata.get('x-goog-spanner-request-id')[0] as string;
+      const usable = false && !methodDefinition.path.match(/Session/);
+      if (usable) {
+        console.log(
+          '>>requestId::interceptor',
+          requestId,
+          'other metadata',
+          metadata,
+          'options',
+          methodDefinition.path,
+        );
+      }
+
+      // TODO: Detect if it is a GAX initiated call.
+      // Examine perhaps the call stack and then figure out continuity of the calls
+      //    so that we can implement the GAX retries whereby for each call, we increment
+      //    the attempt count.
+
+      const newListener = {
+        onReceiveMetadata: function (metadata, next) {
+          next(metadata);
+        },
+        onReceiveMessage: function (message, next) {
+          next(message);
+        },
+        onReceiveStatus: function (status, next) {
+          if (usable) {
+            console.log(
+              'requestId::interceptor',
+              requestId,
+              'path',
+              methodDefinition.path,
+              'status',
+              status,
+            );
+          }
+          next(status);
+        },
+      };
+
+      next(metadata, newListener);
+    },
+
+    sendMessage: function (message, next) {
+      next(message);
+    },
+
+    halfClose: function (next) {
+      next();
+    },
+
+    cancel: function (next) {
+      next();
+    },
+  });
+};
+
+const REGEX = /^(\d)\.([0-9a-z]{16})\.(\d+)\.(\d+)\.(\d+)\.(\d+)$/;
+
+class XGoogRequestId {
+  private nthClientId: number;
+  private channelId: number;
+  private nthRequest: number;
+  private attempt: number;
+
+  constructor(str: string) {
+    const parsed = str && str.match(REGEX);
+    if (!parsed) {
+      throw new Error('input does not match X_GOOG_REQUEST_ID regex');
+    }
+
+    this.nthClientId = Number('0x' + parsed[3]);
+    this.channelId = Number(parsed[4]);
+    this.nthRequest = Number(parsed[5]);
+    this.attempt = Number(parsed[6]);
+  }
+
+  public getNthRequest(): number {
+    return this.nthRequest;
+  }
+
+  public getAttempt(): number {
+    return this.attempt;
+  }
+
+  public incrementAttempt() {
+    this.attempt++;
+  }
+
+  public toString(): string {
+    return craftRequestId(
+      this.nthClientId,
+      this.channelId,
+      this.nthRequest,
+      this.attempt,
+    );
+  }
+
+  public setNthRequest(n: number) {
+    this.nthRequest = n;
+    return this;
+  }
+
+  public setAttempt(n: number) {
+    this.attempt = n;
+    return this;
+  }
+}
+
 export {
   AtomicCounter,
   X_GOOG_REQ_ID_REGEX,
   X_GOOG_SPANNER_REQUEST_ID_HEADER,
   X_GOOG_SPANNER_REQUEST_ID_SPAN_ATTR,
+  XGoogRequestId,
   attributeXGoogSpannerRequestIdToActiveSpan,
   craftRequestId,
+  extractRequestID,
+  injectRequestIDIntoConfig,
   injectRequestIDIntoError,
   injectRequestIDIntoHeaders,
   nextNthRequest,
   nextSpannerClientId,
   newAtomicCounter,
+  nthRequester,
   randIdForProcess,
 };
