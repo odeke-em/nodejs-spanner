@@ -3638,24 +3638,24 @@ describe('Spanner with mock server', () => {
           max: 2,
         });
         const response = await database.create();
-        // assert.ok(response);
-        console.log("response", response);
+        assert.ok(response);
         const [rows] = await database.run(selectSql);
-        console.log("rows", rows);
-        // assert.strictEqual(rows.length, 3);
+        assert.strictEqual(rows.length, 3);
         // Make sure the pool of the newly created database is filled.
         const pool = database.pool_ as SessionPool;
-        // assert.strictEqual(pool.size, 2);
+        assert.strictEqual(pool.size, 2);
         await database.close();
 
         const gotUnaryCalls = xGoogReqIDInterceptor.getUnaryCalls();
         const gotStreamingCalls = xGoogReqIDInterceptor.getStreamingCalls();
+        /*
         console.log(
           `\x1b[34mStreaming calls: ${JSON.stringify(gotStreamingCalls)}\x1b[00m`,
         );
         console.log(
           `\x1b[35mUnary     calls: ${JSON.stringify(gotUnaryCalls)}\x1b[00m`,
         );
+        */
 
         const wantStreamingCalls = [
           {
@@ -3663,7 +3663,7 @@ describe('Spanner with mock server', () => {
             reqId: `1.${randIdForProcess}.1.1.2.1`,
           },
         ];
-        // assert.deepStrictEqual(gotStreamingCalls, wantStreamingCalls);
+        assert.deepStrictEqual(gotStreamingCalls, wantStreamingCalls);
 
         const wantUnaryCalls = [
           {
@@ -3687,7 +3687,7 @@ describe('Spanner with mock server', () => {
             reqId: `1.${randIdForProcess}.1.1.4.1`,
           },
         ];
-        // assert.deepStrictEqual(gotUnaryCalls, wantUnaryCalls);
+        assert.deepStrictEqual(gotUnaryCalls, wantUnaryCalls);
       } catch (err) {
         assert.fail(err as ServiceError);
       }
