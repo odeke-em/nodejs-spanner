@@ -221,28 +221,64 @@ function attributeXGoogSpannerRequestIdToActiveSpan(config: any) {
 }
 
 const X_GOOG_REQ_ID_REGEX = /^1\.[0-9A-Fa-f]{8}(\.\d+){3}\.\d+/;
+const _EXTRACTING_REGEX =
+  /^(\d)\.([0-9A-Fa-f]{8})\.(\d+)\.(\d+)\.(\d+)\.(\d+)$/;
+
+const knownUnaryGAXMethods = {
+  '/google.spanner.v1.Spanner/BatchCreateSessions': true,
+  '/google.spanner.v1.Spanner/DeleteSessions': true,
+};
+
+const noopNthRequester: nthRequester = {
+  _nextNthRequest: function (): number {
+    return -1;
+  },
+};
+
+const mapOfAttempts = new Map();
 
 export const RequestIdInterceptor = (options, nextCall) => {
   const methodDefinition = options.method_definition;
+  // Detect if it is a GAX initiated call that is unary and hence needs manual retries,
+  // given the fact that google-gax doesn't yet offer flexible call options like the
+  // Go and Java libraries offer to intercept retries.
+  const needsManualGAXRetry = knownUnaryGAXMethods[methodDefinition.path];
+
+  const nthRequester: nthRequester = noopNthRequester;
+
   return new grpc.InterceptingCall(nextCall(options), {
     start: (metadata, listener, next) => {
-      const requestId = metadata.get('x-goog-spanner-request-id')[0] as string;
-      const usable = false && !methodDefinition.path.match(/Session/);
+      const reqIdStr = metadata.get(
+        X_GOOG_SPANNER_REQUEST_ID_HEADER,
+      )[0] as string;
+      let uniqKey = methodDefinition.path + reqIdStr;
+      let reqId: XGoogRequestId;
+      if (needsManualGAXRetry) {
+        reqId = new XGoogRequestId(reqIdStr);
+
+        const counter = mapOfAttempts[uniqKey];
+        // console.log(`\x1b[35mreqIdStr: ${reqIdStr}\x1b[00m ` + counter);
+        if (counter) {
+          reqId.setAttempt(counter.value());
+          // console.log('\x1b[32mReplacing metadata after increment\x1b[00m');
+          metadata.set(X_GOOG_SPANNER_REQUEST_ID_HEADER, reqId.toString());
+          mapOfAttempts.delete(uniqKey); // Clear the old value since it has been replaced.
+          uniqKey = methodDefinition.path + reqId.toString();
+          counter.increment();
+          mapOfAttempts[uniqKey] = counter;
+        }
+      }
+      const usable = false && methodDefinition.path.match(/BatchCreateSession/);
       if (usable) {
         console.log(
           '>>requestId::interceptor',
-          requestId,
+          reqIdStr,
           'other metadata',
           metadata,
           'options',
           methodDefinition.path,
         );
       }
-
-      // TODO: Detect if it is a GAX initiated call.
-      // Examine perhaps the call stack and then figure out continuity of the calls
-      //    so that we can implement the GAX retries whereby for each call, we increment
-      //    the attempt count.
 
       const newListener = {
         onReceiveMetadata: function (metadata, next) {
@@ -255,13 +291,38 @@ export const RequestIdInterceptor = (options, nextCall) => {
           if (usable) {
             console.log(
               'requestId::interceptor',
-              requestId,
+              reqId.toString(),
               'path',
               methodDefinition.path,
               'status',
               status,
             );
           }
+
+          // For none OK statuses.
+          if (needsManualGAXRetry) {
+            if (status.code === grpc.status.OK) {
+              // Clear any prior attempts.
+              mapOfAttempts.delete(uniqKey);
+            } else {
+              if (retryableStatusError(status.code)) {
+                // Record the next attempt for later lookup.
+                const attemptCounter = new AtomicCounter(
+                  1 + reqId.getAttempt(),
+                );
+                mapOfAttempts[uniqKey] = attemptCounter;
+                reqId.setAttempt(attemptCounter.value());
+                metadata.set(
+                  X_GOOG_SPANNER_REQUEST_ID_HEADER,
+                  reqId.toString(),
+                );
+              } else {
+                // TODO(@odeke-em): Generate the next nthRequest then update
+                // reqId = reqId.setNthRequest(nthRequester._nextNthRequest()).setAttempt(1);
+              }
+            }
+          }
+
           next(status);
         },
       };
@@ -283,7 +344,9 @@ export const RequestIdInterceptor = (options, nextCall) => {
   });
 };
 
-const REGEX = /^(\d)\.([0-9a-z]{16})\.(\d+)\.(\d+)\.(\d+)\.(\d+)$/;
+function retryableStatusError(code): boolean {
+  return code == grpc.status.UNAVAILABLE || code == grpc.status.INTERNAL;
+}
 
 class XGoogRequestId {
   private nthClientId: number;
@@ -292,9 +355,11 @@ class XGoogRequestId {
   private attempt: number;
 
   constructor(str: string) {
-    const parsed = str && str.match(REGEX);
+    const parsed = str && str.match(_EXTRACTING_REGEX);
     if (!parsed) {
-      throw new Error('input does not match X_GOOG_REQUEST_ID regex');
+      throw new Error(
+        `input does not match X_GOOG_REQUEST_ID regex, given: ${str}`,
+      );
     }
 
     this.nthClientId = Number('0x' + parsed[3]);
