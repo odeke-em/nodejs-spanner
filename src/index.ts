@@ -95,7 +95,6 @@ import {
   nextSpannerClientId,
   nthRequester,
   RequestIdInterceptor,
-  XGoogRequestId,
 } from './request_id_header';
 import {PeriodicExportingMetricReader} from '@opentelemetry/sdk-metrics';
 import {MetricInterceptor} from './metrics/interceptor';

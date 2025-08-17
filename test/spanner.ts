@@ -63,6 +63,7 @@ import {
   X_GOOG_REQ_ID_REGEX,
   X_GOOG_SPANNER_REQUEST_ID_HEADER,
   X_GOOG_SPANNER_REQUEST_ID_SPAN_ATTR,
+  XGoogRequestId,
   randIdForProcess,
   resetNthClientId,
 } from '../src/request_id_header';
@@ -3193,6 +3194,10 @@ describe('Spanner with mock server', () => {
   });
 
   describe('session-pool', () => {
+    beforeEach(() => {
+      resetNthClientId();
+    });
+
     it('should execute table mutations without leaking sessions', async () => {
       const database = newTestDatabase();
       try {
@@ -3622,6 +3627,7 @@ describe('Spanner with mock server', () => {
     });
 
     it('BatchCreateSession retries properly increment x-goog-spanner-request-id attempts', async () => {
+      resetNthClientId();
       spannerMock.setExecutionTime(
         spannerMock.batchCreateSessions,
         SimulatedExecutionTime.ofErrors([
@@ -3631,6 +3637,7 @@ describe('Spanner with mock server', () => {
           },
         ] as MockError[]),
       );
+
       try {
         const database = newTestDatabase({
           incStep: 1,
@@ -3665,18 +3672,24 @@ describe('Spanner with mock server', () => {
         ];
         assert.deepStrictEqual(gotStreamingCalls, wantStreamingCalls);
 
+        // BatchCreateSessions is created on a need-by-need basis which also means
+        // that we need to infer the clientId from what's available.
+        assert.ok(gotUnaryCalls.length > 0);
+        const sampleReqId = new XGoogRequestId(gotUnaryCalls[0].reqId);
+        const clientId = sampleReqId.getNthClientId();
+
         const wantUnaryCalls = [
           {
             method: '/google.spanner.v1.Spanner/BatchCreateSessions',
-            reqId: `1.${randIdForProcess}.3.1.1.1`,
+            reqId: `1.${randIdForProcess}.${clientId}.1.1.1`,
           },
           {
             method: '/google.spanner.v1.Spanner/BatchCreateSessions',
-            reqId: `1.${randIdForProcess}.3.1.1.2`,
+            reqId: `1.${randIdForProcess}.${clientId}.1.1.2`,
           },
           {
             method: '/google.spanner.v1.Spanner/BatchCreateSessions',
-            reqId: `1.${randIdForProcess}.3.1.1.3`,
+            reqId: `1.${randIdForProcess}.${clientId}.1.1.3`,
           },
           {
             method: '/google.spanner.v1.Spanner/DeleteSession',
@@ -3687,6 +3700,7 @@ describe('Spanner with mock server', () => {
             reqId: `1.${randIdForProcess}.1.1.4.1`,
           },
         ];
+        console.log(JSON.stringify(gotUnaryCalls));
         assert.deepStrictEqual(gotUnaryCalls, wantUnaryCalls);
       } catch (err) {
         assert.fail(err as ServiceError);
@@ -7035,6 +7049,7 @@ describe('Spanner with mock server', () => {
     provider.register();
 
     beforeEach(async () => {
+      resetNthClientId();
       await exporter.forceFlush();
       await exporter.reset();
     });

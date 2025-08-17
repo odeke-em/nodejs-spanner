@@ -109,17 +109,6 @@ function extractRequestID(config: any): string {
   return '';
 }
 
-function injectRequestIDIntoConfig(config: any, reqIdStr: string) {
-  if (!config) {
-    return;
-  }
-
-  const hdrs = config as withHeaders;
-  if (hdrs && hdrs.headers) {
-    hdrs.headers[X_GOOG_SPANNER_REQUEST_ID_HEADER] = reqIdStr;
-  }
-}
-
 function injectRequestIDIntoError(config: any, err: Error) {
   if (!err) {
     return;
@@ -226,7 +215,10 @@ const _EXTRACTING_REGEX =
 
 const knownUnaryGAXMethods = {
   '/google.spanner.v1.Spanner/BatchCreateSessions': true,
+  '/google.spanner.v1.Spanner/CreateSession': true,
   '/google.spanner.v1.Spanner/DeleteSessions': true,
+  '/google.spanner.v1.Spanner/GetSession': true,
+  '/google.spanner.v1.Spanner/ListSessions': true,
 };
 
 const noopNthRequester: nthRequester = {
@@ -235,7 +227,10 @@ const noopNthRequester: nthRequester = {
   },
 };
 
-const mapOfAttempts = new Map();
+// mapOfReqIdRetries stores a mapping of [methodDefinition.path + reqId] to the last saved attempt
+// counter so that with GAX manual retries we can update the attempts in the gRPC interceptor and thus
+// can have the correct x-goog-spanner-reuqest-id values.
+const mapOfReqIdRetries = new Map();
 
 export const RequestIdInterceptor = (options, nextCall) => {
   const methodDefinition = options.method_definition;
@@ -244,6 +239,8 @@ export const RequestIdInterceptor = (options, nextCall) => {
   // Go and Java libraries offer to intercept retries.
   const needsManualGAXRetry = knownUnaryGAXMethods[methodDefinition.path];
 
+  // TODO(@odeke-em): infer the nthRequester from the running context and find who invoked
+  // us so that we can have the this.database.
   const nthRequester: nthRequester = noopNthRequester;
 
   return new grpc.InterceptingCall(nextCall(options), {
@@ -251,33 +248,20 @@ export const RequestIdInterceptor = (options, nextCall) => {
       const reqIdStr = metadata.get(
         X_GOOG_SPANNER_REQUEST_ID_HEADER,
       )[0] as string;
-      let uniqKey = methodDefinition.path + reqIdStr;
+      let reqIdStoreKey = methodDefinition.path + reqIdStr;
       let reqId: XGoogRequestId;
       if (needsManualGAXRetry) {
         reqId = new XGoogRequestId(reqIdStr);
 
-        const counter = mapOfAttempts[uniqKey];
-        // console.log(`\x1b[35mreqIdStr: ${reqIdStr}\x1b[00m ` + counter);
+        const counter = mapOfReqIdRetries[reqIdStoreKey];
         if (counter) {
           reqId.setAttempt(counter.value());
-          // console.log('\x1b[32mReplacing metadata after increment\x1b[00m');
           metadata.set(X_GOOG_SPANNER_REQUEST_ID_HEADER, reqId.toString());
-          mapOfAttempts.delete(uniqKey); // Clear the old value since it has been replaced.
-          uniqKey = methodDefinition.path + reqId.toString();
+          mapOfReqIdRetries.delete(reqIdStoreKey); // Clear the old value since it has been replaced.
+          reqIdStoreKey = methodDefinition.path + reqId.toString();
           counter.increment();
-          mapOfAttempts[uniqKey] = counter;
+          mapOfReqIdRetries[reqIdStoreKey] = counter;
         }
-      }
-      const usable = false && methodDefinition.path.match(/BatchCreateSession/);
-      if (usable) {
-        console.log(
-          '>>requestId::interceptor',
-          reqIdStr,
-          'other metadata',
-          metadata,
-          'options',
-          methodDefinition.path,
-        );
       }
 
       const newListener = {
@@ -288,39 +272,24 @@ export const RequestIdInterceptor = (options, nextCall) => {
           next(message);
         },
         onReceiveStatus: function (status, next) {
-          if (usable) {
-            console.log(
-              'requestId::interceptor',
-              reqId.toString(),
-              'path',
-              methodDefinition.path,
-              'status',
-              status,
-            );
+          if (!needsManualGAXRetry) {
+            next(status);
+            return;
           }
 
-          // For none OK statuses.
-          if (needsManualGAXRetry) {
-            if (status.code === grpc.status.OK) {
-              // Clear any prior attempts.
-              mapOfAttempts.delete(uniqKey);
-            } else {
-              if (retryableStatusError(status.code)) {
-                // Record the next attempt for later lookup.
-                const attemptCounter = new AtomicCounter(
-                  1 + reqId.getAttempt(),
-                );
-                mapOfAttempts[uniqKey] = attemptCounter;
-                reqId.setAttempt(attemptCounter.value());
-                metadata.set(
-                  X_GOOG_SPANNER_REQUEST_ID_HEADER,
-                  reqId.toString(),
-                );
-              } else {
-                // TODO(@odeke-em): Generate the next nthRequest then update
-                // reqId = reqId.setNthRequest(nthRequester._nextNthRequest()).setAttempt(1);
-              }
-            }
+          if (status.code === grpc.status.OK) {
+            // Succeeded.
+            // Clear any prior stored values just in case there were any.
+            mapOfReqIdRetries.delete(reqIdStoreKey);
+          } else if (retryableStatusError(status.code)) {
+            // Record the next attempt for later lookup.
+            const attemptCounter = new AtomicCounter(1 + reqId.getAttempt());
+            mapOfReqIdRetries[reqIdStoreKey] = attemptCounter;
+            reqId.setAttempt(attemptCounter.value());
+            metadata.set(X_GOOG_SPANNER_REQUEST_ID_HEADER, reqId.toString());
+          } else {
+            // TODO(@odeke-em): Generate the next nthRequest then update
+            // reqId = reqId.setNthRequest(nthRequester._nextNthRequest()).setAttempt(1);
           }
 
           next(status);
@@ -380,6 +349,10 @@ class XGoogRequestId {
     this.attempt++;
   }
 
+  public getNthClientId(): number {
+    return this.nthClientId;
+  }
+
   public toString(): string {
     return craftRequestId(
       this.nthClientId,
@@ -409,7 +382,6 @@ export {
   attributeXGoogSpannerRequestIdToActiveSpan,
   craftRequestId,
   extractRequestID,
-  injectRequestIDIntoConfig,
   injectRequestIDIntoError,
   injectRequestIDIntoHeaders,
   nextNthRequest,
