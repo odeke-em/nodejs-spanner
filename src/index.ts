@@ -323,7 +323,6 @@ class Spanner extends GrpcService {
   private _isInSecureCredentials: boolean;
   private static _isAFEServerTimingEnabled: boolean | undefined;
   readonly _nthClientId: number;
-  nthRequester_: nthRequester;
 
   /**
    * Placeholder used to auto populate a column with the commit timestamp.
@@ -500,7 +499,6 @@ class Spanner extends GrpcService {
     this._nthClientId = nextSpannerClientId();
     this._universeDomain = universeEndpoint;
     this.configureMetrics_(options.disableBuiltInMetrics);
-    this.nthRequester_ = noopNthRequester;
   }
 
   get universeDomain() {
@@ -2159,17 +2157,7 @@ class Spanner extends GrpcService {
     }
     return codec.Struct.fromJSON(value);
   }
-
-  public _setNthRequester(nthRequester: nthRequester) {
-    this.nthRequester_ = nthRequester;
-  }
 }
-
-const noopNthRequester: nthRequester = {
-  _nextNthRequest: function (): number {
-    return -1;
-  },
-};
 
 let cleanupCalled = false;
 const cleanup = async () => {

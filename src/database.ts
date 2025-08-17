@@ -507,10 +507,6 @@ class Database extends common.GrpcServiceObject {
       Object.assign({}, queryOptions),
       Database.getEnvironmentQueryOptions(),
     );
-
-    if (this.parent && this.parent.parent) {
-      (this.parent.parent as Spanner)._setNthRequester(this);
-    }
   }
 
   _nextNthRequest(): number {
