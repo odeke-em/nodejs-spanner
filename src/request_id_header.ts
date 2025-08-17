@@ -221,99 +221,100 @@ const knownUnaryGAXMethods = {
   '/google.spanner.v1.Spanner/ListSessions': true,
 };
 
-const noopNthRequester: nthRequester = {
-  _nextNthRequest: function (): number {
-    return -1;
-  },
-};
-
-// mapOfReqIdRetries stores a mapping of [methodDefinition.path + reqId] to the last saved attempt
+// mapOfReqIdAttempts stores a mapping of [methodDefinition.path + reqId] to the last saved attempt
 // counter so that with GAX manual retries we can update the attempts in the gRPC interceptor and thus
 // can have the correct x-goog-spanner-reuqest-id values.
-const mapOfReqIdRetries = new Map();
+const mapOfReqIdAttempts = new Map();
+const mapOfReqIdNthRequests = new Map();
 
-export const RequestIdInterceptor = (options, nextCall) => {
-  const methodDefinition = options.method_definition;
-  // Detect if it is a GAX initiated call that is unary and hence needs manual retries,
-  // given the fact that google-gax doesn't yet offer flexible call options like the
-  // Go and Java libraries offer to intercept retries.
-  const needsManualGAXRetry = knownUnaryGAXMethods[methodDefinition.path];
+export function generateRequestIdInterceptor(nthRequester_: nthRequester) {
+  return (options, nextCall) => {
+    const methodDefinition = options.method_definition;
+    // Detect if it is a GAX initiated call that is unary and hence needs manual retries,
+    // given the fact that google-gax doesn't yet offer flexible call options like the
+    // Go and Java libraries offer to intercept retries.
+    const needsManualGAXRetry = knownUnaryGAXMethods[methodDefinition.path];
 
-  // TODO(@odeke-em): infer the nthRequester from the running context and find who invoked
-  // us so that we can have the this.database.
-  const nthRequester: nthRequester = noopNthRequester;
+    return new grpc.InterceptingCall(nextCall(options), {
+      start: (metadata, listener, next) => {
+        const reqIdStr = metadata.get(
+          X_GOOG_SPANNER_REQUEST_ID_HEADER,
+        )[0] as string;
+        let reqIdStoreKey = methodDefinition.path + reqIdStr;
+        let reqId: XGoogRequestId;
+        if (needsManualGAXRetry) {
+          reqId = new XGoogRequestId(reqIdStr);
 
-  return new grpc.InterceptingCall(nextCall(options), {
-    start: (metadata, listener, next) => {
-      const reqIdStr = metadata.get(
-        X_GOOG_SPANNER_REQUEST_ID_HEADER,
-      )[0] as string;
-      let reqIdStoreKey = methodDefinition.path + reqIdStr;
-      let reqId: XGoogRequestId;
-      if (needsManualGAXRetry) {
-        reqId = new XGoogRequestId(reqIdStr);
-
-        const counter = mapOfReqIdRetries[reqIdStoreKey];
-        if (counter) {
-          reqId.setAttempt(counter.value());
-          metadata.set(X_GOOG_SPANNER_REQUEST_ID_HEADER, reqId.toString());
-          mapOfReqIdRetries.delete(reqIdStoreKey); // Clear the old value since it has been replaced.
-          reqIdStoreKey = methodDefinition.path + reqId.toString();
-          counter.increment();
-          mapOfReqIdRetries[reqIdStoreKey] = counter;
-        }
-      }
-
-      const newListener = {
-        onReceiveMetadata: function (metadata, next) {
-          next(metadata);
-        },
-        onReceiveMessage: function (message, next) {
-          next(message);
-        },
-        onReceiveStatus: function (status, next) {
-          if (!needsManualGAXRetry) {
-            next(status);
-            return;
-          }
-
-          if (status.code === grpc.status.OK) {
-            // Succeeded.
-            // Clear any prior stored values just in case there were any.
-            mapOfReqIdRetries.delete(reqIdStoreKey);
-          } else if (retryableStatusError(status.code)) {
-            // Record the next attempt for later lookup.
-            const attemptCounter = new AtomicCounter(1 + reqId.getAttempt());
-            mapOfReqIdRetries[reqIdStoreKey] = attemptCounter;
-            reqId.setAttempt(attemptCounter.value());
+          const updatedAttempt = mapOfReqIdAttempts[reqIdStoreKey];
+          const updatedNthRequest = mapOfReqIdNthRequests[reqIdStoreKey];
+          if (updatedAttempt) {
+            reqId.setAttempt(updatedAttempt.value());
             metadata.set(X_GOOG_SPANNER_REQUEST_ID_HEADER, reqId.toString());
-          } else {
-            // TODO(@odeke-em): Generate the next nthRequest then update
-            // reqId = reqId.setNthRequest(nthRequester._nextNthRequest()).setAttempt(1);
+            mapOfReqIdAttempts.delete(reqIdStoreKey); // Clear the old value since it has been replaced.
+            reqIdStoreKey = methodDefinition.path + reqId.toString();
+            updatedAttempt.increment();
+            mapOfReqIdAttempts[reqIdStoreKey] = updatedAttempt;
+          } else if (updatedNthRequest) {
+            reqId.setNthRequest(updatedNthRequest).setAttempt(1);
+            metadata.set(X_GOOG_SPANNER_REQUEST_ID_HEADER, reqId.toString());
+            mapOfReqIdNthRequests.delete(reqIdStoreKey); // Clear the old value since it has been replaced.
           }
+        }
 
-          next(status);
-        },
-      };
+        const newListener = {
+          onReceiveMetadata: function (metadata, next) {
+            next(metadata);
+          },
+          onReceiveMessage: function (message, next) {
+            next(message);
+          },
+          onReceiveStatus: function (status, next) {
+            if (!needsManualGAXRetry) {
+              next(status);
+              return;
+            }
 
-      next(metadata, newListener);
-    },
+            if (status.code === grpc.status.OK) {
+              // Succeeded.
+              // Clear any prior stored values just in case there were any.
+              mapOfReqIdAttempts.delete(reqIdStoreKey);
+            } else if (statusNeedsAttemptIncrement(status.code)) {
+              // Record the next attempt for later lookup.
+              const attemptCounter = new AtomicCounter(1 + reqId.getAttempt());
+              mapOfReqIdAttempts[reqIdStoreKey] = attemptCounter;
+              reqId.setAttempt(attemptCounter.value());
+              metadata.set(X_GOOG_SPANNER_REQUEST_ID_HEADER, reqId.toString());
+            } else {
+              // This needs a fresh request hence We just need to bump up the nthRequest and attempt=1
+              mapOfReqIdNthRequests[reqIdStoreKey] =
+                nthRequester_._nextNthRequest();
+            }
 
-    sendMessage: function (message, next) {
-      next(message);
-    },
+            next(status);
+          },
+        };
 
-    halfClose: function (next) {
-      next();
-    },
+        next(metadata, newListener);
+      },
 
-    cancel: function (next) {
-      next();
-    },
-  });
-};
+      sendMessage: function (message, next) {
+        next(message);
+      },
 
-function retryableStatusError(code): boolean {
+      halfClose: function (next) {
+        next();
+      },
+
+      cancel: function (next) {
+        next();
+      },
+    });
+  };
+}
+
+// statusNeedsAttemptIncrement returns true if for a retry this could be an idempotent
+// request for which we should increment the attempt value instead of bumping up the nthRequest.
+function statusNeedsAttemptIncrement(code): boolean {
   return code == grpc.status.UNAVAILABLE || code == grpc.status.INTERNAL;
 }
 

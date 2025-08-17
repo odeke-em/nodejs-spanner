@@ -612,6 +612,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'updateDatabase',
+        nthRequester: this,
         reqOpts,
         gaxOpts,
         headers: this.commonHeaders_,
@@ -736,6 +737,7 @@ class Database extends common.GrpcServiceObject {
         {
           client: 'SpannerClient',
           method: 'batchCreateSessions',
+          nthRequester: this,
           reqOpts,
           gaxOpts: options.gaxOptions,
           headers: allHeaders,
@@ -1061,6 +1063,7 @@ class Database extends common.GrpcServiceObject {
         {
           client: 'SpannerClient',
           method: 'createSession',
+          nthRequester: this,
           reqOpts,
           gaxOpts: options.gaxOptions,
           headers: headers,
@@ -1276,6 +1279,7 @@ class Database extends common.GrpcServiceObject {
         {
           client: 'DatabaseAdminClient',
           method: 'dropDatabase',
+          nthRequester: this,
           reqOpts,
           gaxOpts,
           headers: this.commonHeaders_,
@@ -1508,6 +1512,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'getDatabase',
+        nthRequester: this,
         reqOpts,
         gaxOpts,
         headers: this.commonHeaders_,
@@ -1762,6 +1767,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'getDatabaseDdl',
+        nthRequester: this,
         reqOpts,
         gaxOpts,
         headers: this.commonHeaders_,
@@ -1842,6 +1848,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'getIamPolicy',
+        nthRequester: this,
         reqOpts,
         gaxOpts: options.gaxOptions,
         headers: this.commonHeaders_,
@@ -1987,6 +1994,7 @@ class Database extends common.GrpcServiceObject {
         {
           client: 'SpannerClient',
           method: 'listSessions',
+          nthRequester: this,
           reqOpts,
           gaxOpts,
           headers: headers,
@@ -2080,6 +2088,7 @@ class Database extends common.GrpcServiceObject {
     return this.requestStream({
       client: 'SpannerClient',
       method: 'listSessionsStream',
+      nthRequester: this,
       reqOpts,
       gaxOpts,
       headers: this.commonHeaders_,
@@ -2500,6 +2509,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'listDatabaseRoles',
+        nthRequester: this,
         reqOpts,
         gaxOpts,
         headers: this.commonHeaders_,
@@ -2541,6 +2551,7 @@ class Database extends common.GrpcServiceObject {
       const span = getActiveOrNoopSpan();
       span.addEvent('Using Session', {'session.id': session?.id});
       config.reqOpts.session = session!.formattedName_;
+      config.nthRequester = this;
       this.request<Session>(config, (err, ...args) => {
         sessionFactory_.release(session!);
         callback!(err, ...args);
@@ -2710,6 +2721,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'restoreDatabase',
+        nthRequester: this,
         reqOpts,
         gaxOpts,
         headers: this.commonHeaders_,
@@ -3929,6 +3941,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'setIamPolicy',
+        nthRequester: this,
         reqOpts,
         gaxOpts: gaxOpts,
         headers: this.commonHeaders_,
@@ -4059,6 +4072,7 @@ class Database extends common.GrpcServiceObject {
       {
         client: 'DatabaseAdminClient',
         method: 'updateDatabaseDdl',
+        nthRequester: this,
         reqOpts,
         gaxOpts,
         headers: this.commonHeaders_,

@@ -94,7 +94,7 @@ import {
   injectRequestIDIntoError,
   nextSpannerClientId,
   nthRequester,
-  RequestIdInterceptor,
+  generateRequestIdInterceptor,
 } from './request_id_header';
 import {PeriodicExportingMetricReader} from '@opentelemetry/sdk-metrics';
 import {MetricInterceptor} from './metrics/interceptor';
@@ -184,6 +184,7 @@ export interface RequestConfig {
   reqOpts: any;
   gaxOpts?: CallOptions;
   headers: {[k: string]: string};
+  nthRequester?: nthRequester;
 }
 export interface CreateInstanceRequest {
   config?: string;
@@ -1701,7 +1702,7 @@ class Spanner extends GrpcService {
       if (MetricsTracerFactory.enabled) {
         interceptors.push(MetricInterceptor);
       }
-      interceptors.push(RequestIdInterceptor);
+      interceptors.push(generateRequestIdInterceptor(config.nthRequester));
       const requestFn = gaxClient[config.method].bind(
         gaxClient,
         reqOpts,

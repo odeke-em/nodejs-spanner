@@ -248,6 +248,7 @@ class XGoogRequestHeaderInterceptor {
     return new grpcModule.ServerInterceptingCall(call, responder);
   }
 }
+
 describe('Spanner with mock server', () => {
   let sandbox: sinon.SinonSandbox;
   const selectSql = 'SELECT NUM, NAME FROM NUMBERS';
@@ -3655,14 +3656,6 @@ describe('Spanner with mock server', () => {
 
         const gotUnaryCalls = xGoogReqIDInterceptor.getUnaryCalls();
         const gotStreamingCalls = xGoogReqIDInterceptor.getStreamingCalls();
-        /*
-        console.log(
-          `\x1b[34mStreaming calls: ${JSON.stringify(gotStreamingCalls)}\x1b[00m`,
-        );
-        console.log(
-          `\x1b[35mUnary     calls: ${JSON.stringify(gotUnaryCalls)}\x1b[00m`,
-        );
-        */
 
         const wantStreamingCalls = [
           {
